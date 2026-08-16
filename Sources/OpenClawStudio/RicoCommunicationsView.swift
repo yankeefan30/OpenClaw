@@ -1022,9 +1022,11 @@ final class RicoCommunicationsStore: ObservableObject {
         )
         let paintsVerifiedImmediately = !forceFullProjection && launchDecision.paintsVerifiedImmediately
         if paintsVerifiedImmediately {
+            // Skip a native rewrite when files already match. Green still
+            // requires Gateway running + probe.ok in the status pill.
             enforcementState = .verified
             healthQuarantined = false
-            status = "Rico's live guard is unpaused and native iMessage allowlists already match the reviewed policy."
+            status = "Local policy matches. Confirming Gateway iMessage is running…"
         }
 
         projectionTask = Task {
@@ -1265,7 +1267,7 @@ enum RicoRecipientGuard {
               let notBefore = routeObject["notBeforeMs"] as? NSNumber,
               notBefore.doubleValue.isFinite else { return false }
         guard let policies else { return true }
-        let expectedIdentities = projectedIdentities(policies)
+        let expectedIdentities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root))
         guard jsonEquivalent(policyObject["identities"], expectedIdentities) else { return false }
         let expectedOwners = projectedOwnerHandles(policies)
         let expectedGroups = projectedAllowedGroupChatIDs(policies)
@@ -1347,7 +1349,15 @@ enum RicoRecipientGuard {
         })).sorted()
     }
 
-    private static func projectedIdentities(_ policies: [RicoRecipientPolicy]) -> [[String: Any]] {
+    private static func existingOwnerDirectChatId(in root: URL) -> Int? {
+        let route = root.appendingPathComponent("rico-owner-command-route.json")
+        guard let object = (try? JSONSerialization.jsonObject(with: Data(contentsOf: route))) as? [String: Any],
+              let value = (object["ownerDirectChatId"] as? NSNumber)?.intValue,
+              value > 0 else { return nil }
+        return value
+    }
+
+    private static func projectedIdentities(_ policies: [RicoRecipientPolicy], ownerDirectChatId: Int? = nil) -> [[String: Any]] {
         policies.map { policy in
             var value: [String: Any] = [
                 "target": normalizeTarget(policy.address),
@@ -1360,6 +1370,9 @@ enum RicoRecipientGuard {
             ]
             let displayName = RicoContactDirectory.safeDisplayName(policy.displayName)
             if !displayName.isEmpty { value["displayName"] = displayName }
+            if policy.groupChatID == nil, policy.access == .owner, policy.autoReply, let ownerDirectChatId, ownerDirectChatId > 0 {
+                value["directChatId"] = ownerDirectChatId
+            }
             if let groupID = policy.groupChatID {
                 value["groupChatID"] = groupID
                 let participants = Array(Set((policy.participantAddresses ?? []).map(normalizeTarget).filter { !$0.isEmpty })).sorted()
@@ -1427,7 +1440,7 @@ enum RicoRecipientGuard {
         })) .sorted()
         let previousBindingTargets = existing?["managedSharedBindingTargets"] as? [String] ?? []
         let managedSharedBindingTargets = Array(Set(previousBindingTargets + sharedBindingTargets)).sorted()
-        let identities = projectedIdentities(policies)
+        let identities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root))
         let object: [String: Any] = [
             "schemaVersion": 2,
             "paused": paused,
@@ -1454,13 +1467,17 @@ enum RicoRecipientGuard {
         let notBeforeMs = sameActiveScope && existingNotBefore?.isFinite == true
             ? existingNotBefore!
             : Date().timeIntervalSince1970 * 1000
-        let ownerRoute: [String: Any] = [
+        let existingChatId = (existingOwnerRoute?["ownerDirectChatId"] as? NSNumber)?.intValue
+        var ownerRoute: [String: Any] = [
             "schemaVersion": 1,
             "enabled": routeEnabled,
             "ownerHandles": ownerHandles,
             "allowedGroupChatIds": allowedGroupChatIDs,
             "notBeforeMs": notBeforeMs,
         ]
+        if let existingChatId, existingChatId > 0 {
+            ownerRoute["ownerDirectChatId"] = existingChatId
+        }
         let ownerRouteData = try JSONSerialization.data(withJSONObject: ownerRoute, options: [.prettyPrinted, .sortedKeys])
         try secureAtomicWrite(ownerRouteData, to: ownerRouteURL)
     }
@@ -4063,23 +4080,39 @@ struct RicoCommunicationsView: View {
     private var imessageChecking: Bool { store.imessageProbeReadiness == nil }
     private var enforcementLabel: String {
         switch store.enforcementState {
-        case .applying: store.globalPaused ? "Pause syncing" : "Policy syncing"
-        case .verified: store.globalPaused ? "Messaging paused" : "Guard verified"
-        case .failed: store.globalPaused ? "Pause retrying" : "Verification retrying"
+        case .applying:
+            return store.globalPaused ? "Pause syncing" : "Policy syncing"
+        case .verified:
+            if store.globalPaused { return "Messaging paused" }
+            if imessageChecking { return "Confirming Gateway" }
+            if !imessageReady { return "UI ok, Gateway not sending" }
+            return "Guard verified"
+        case .failed:
+            return store.globalPaused ? "Pause retrying" : "Verification retrying"
         }
     }
     private var enforcementColor: Color {
         switch store.enforcementState {
-        case .applying: .orange
-        case .verified: store.globalPaused ? .orange : .green
-        case .failed: store.globalPaused ? .orange : .secondary
+        case .applying:
+            return .orange
+        case .verified:
+            if store.globalPaused { return .orange }
+            if imessageChecking || !imessageReady { return .orange }
+            return .green
+        case .failed:
+            return store.globalPaused ? .orange : .secondary
         }
     }
     private var enforcementSymbol: String {
         switch store.enforcementState {
-        case .applying: "arrow.triangle.2.circlepath"
-        case .verified: store.globalPaused ? "pause.fill" : "checkmark.shield.fill"
-        case .failed: "arrow.triangle.2.circlepath"
+        case .applying:
+            return "arrow.triangle.2.circlepath"
+        case .verified:
+            if store.globalPaused { return "pause.fill" }
+            if imessageChecking || !imessageReady { return "exclamationmark.triangle.fill" }
+            return "checkmark.shield.fill"
+        case .failed:
+            return "arrow.triangle.2.circlepath"
         }
     }
     private var pauseVerified: Bool {

@@ -28,8 +28,12 @@ package-lock.json
 *.pem
 *.p12
 *.key
+*.token
 credentials.json
 **/credentials.json
+
+# Twilio credential drop (Word doc / API material — never commit)
+Twillio/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

@@ -243,6 +243,10 @@ function validPolicyIdentity(identity) {
   if (typeof identity.requireMention !== "boolean" || typeof identity.autoReply !== "boolean") return false;
   if (!Number.isInteger(identity.quietStart) || identity.quietStart < 0 || identity.quietStart > 23) return false;
   if (!Number.isInteger(identity.quietEnd) || identity.quietEnd < 0 || identity.quietEnd > 23) return false;
+  if (Object.prototype.hasOwnProperty.call(identity, "directChatId")) {
+    if (identity.kind !== "individual" || identity.access !== "owner") return false;
+    if (!Number.isSafeInteger(identity.directChatId) || identity.directChatId <= 0) return false;
+  }
   const target = normalize(identity.target);
   const hasPersonality = Object.prototype.hasOwnProperty.call(identity, "personality");
   if (identity.kind === "individual") return !hasPersonality && validSenderHandle(target) !== "";
@@ -854,7 +858,7 @@ export function evaluateInbound(event, ctx, policy, now = new Date()) {
 
   if (identity.access === "blocked") return { allow: false, reason: "Identity is blocked." };
   if (identity.autoReply !== true) return { allow: false, reason: "Automatic replies are disabled." };
-  if (quietNow(identity, now)) return { allow: false, reason: "Identity is inside configured quiet hours." };
+  if (!owner && quietNow(identity, now)) return { allow: false, reason: "Identity is inside configured quiet hours." };
   const mentionRequired = identity.requireMention === true && !(owner && event.isGroup !== true);
   if (mentionRequired && !containsRicoMention(event)) {
     return { allow: false, reason: "A Rico mention is required." };
@@ -867,5 +871,17 @@ export function outboundIdentity(policy, target) {
   const matches = policy.identities.filter((item) => item && typeof item === "object" && normalize(item.target) === expected);
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) return { kind: "ambiguous", target: expected, access: "blocked" };
+  if (!expected.startsWith("chat_id:")) return undefined;
+  const chatId = Number(expected.slice("chat_id:".length));
+  if (!Number.isSafeInteger(chatId) || chatId <= 0) return undefined;
+  const owners = policy.identities.filter((item) =>
+    item && typeof item === "object"
+    && item.kind === "individual"
+    && item.access === "owner"
+    && item.autoReply === true
+    && Number(item.directChatId) === chatId
+  );
+  if (owners.length === 1) return owners[0];
+  if (owners.length > 1) return { kind: "ambiguous", target: expected, access: "blocked" };
   return undefined;
 }

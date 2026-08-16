@@ -57,6 +57,10 @@ export function validateRoutePolicy(value) {
   if (allowedGroupChatIds.length !== value.allowedGroupChatIds.length) return null;
   const notBeforeMs = Number(value.notBeforeMs);
   if (!Number.isFinite(notBeforeMs) || notBeforeMs <= 0) return null;
+  const ownerDirectChatId = value.ownerDirectChatId == null
+    ? null
+    : positiveChatId(value.ownerDirectChatId);
+  if (value.ownerDirectChatId != null && ownerDirectChatId === null) return null;
 
   return Object.freeze({
     schemaVersion: 1,
@@ -64,6 +68,7 @@ export function validateRoutePolicy(value) {
     ownerHandles: Object.freeze(ownerHandles),
     allowedGroupChatIds: Object.freeze(allowedGroupChatIds),
     notBeforeMs,
+    ownerDirectChatId,
   });
 }
 
@@ -203,12 +208,29 @@ export function observeOwnerSelfChat(message, policy, routeCache, observedAtMs =
   return routeCache.remember(owner, chatId, timestamp, observedAtMs);
 }
 
+const OWNER_SEND_METHODS = new Set(["send", "send.rich"]);
+const OWNER_SEND_SERVICES = new Set(["imessage", "auto"]);
+const CLI_SEND_TIMEOUT_MS = 45_000;
+
+function ownerSendService(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isOwnerSendFrame(parsed) {
+  if (!OWNER_SEND_METHODS.has(parsed.method)) return false;
+  const params = parsed.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return false;
+  const service = ownerSendService(params.service);
+  return service === "" || OWNER_SEND_SERVICES.has(service);
+}
+
 /**
- * Rewrite only the exact RPC shape OpenClaw uses for an iMessage handle send.
- * Existing chat targets, SMS/auto sends, other methods and unavailable route
- * evidence pass through untouched. Thread metadata is removed only for the
- * exact self-chat rewrite because the AppleScript self-chat path cannot safely
- * retry the historical threaded request.
+ * Rewrite the exact RPC shape OpenClaw uses for an owner iMessage send.
+ * On this Mac, AppleScript delivery to chat_id 570 hangs even without
+ * `reply_to`, while the same text sent to the owner handle returns a
+ * receipt. Keep owner replies on that working handle, strip thread
+ * metadata that AppleScript cannot resolve, and never use send.rich
+ * (IMCore is unavailable while SIP is on).
  */
 export function rewriteOwnerSelfChatSend(parsed, policy, routeCache, resolvedAtMs = Date.now()) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return parsed;
@@ -217,28 +239,132 @@ export function rewriteOwnerSelfChatSend(parsed, policy, routeCache, resolvedAtM
     routeCache?.clear?.();
     return parsed;
   }
-  if (parsed.method !== "send") return parsed;
+  if (!isOwnerSendFrame(parsed)) return parsed;
   const params = parsed.params;
-  if (!params || typeof params !== "object" || Array.isArray(params)) return parsed;
-  if (params.service !== "imessage") return parsed;
-  if (
-    Object.hasOwn(params, "chat_id") ||
-    Object.hasOwn(params, "chat_guid") ||
-    Object.hasOwn(params, "chat_identifier")
-  ) {
-    return parsed;
-  }
 
   const owner = activePolicy.ownerHandles[0];
-  if (normalizeHandle(params.to) !== owner) return parsed;
-  if (!routeCache || typeof routeCache.resolve !== "function") return parsed;
-  const chatId = routeCache.resolve(owner, activePolicy.notBeforeMs, resolvedAtMs);
-  if (chatId === null) return parsed;
+  const cachedChatId = (routeCache && typeof routeCache.resolve === "function"
+    ? routeCache.resolve(owner, activePolicy.notBeforeMs, resolvedAtMs)
+    : null) ?? activePolicy.ownerDirectChatId;
+  if (Object.hasOwn(params, "chat_guid") || Object.hasOwn(params, "chat_identifier")) {
+    return parsed;
+  }
+  const targetedChatId = positiveChatId(params.chat_id);
+  let ownerTargeted = false;
+  if (targetedChatId !== null) {
+    if (cachedChatId !== targetedChatId) return parsed;
+    ownerTargeted = true;
+  } else if (normalizeHandle(params.to) === owner) {
+    ownerTargeted = true;
+  }
+  if (!ownerTargeted) return parsed;
 
-  const rewrittenParams = { ...params, chat_id: chatId };
-  delete rewrittenParams.to;
+  const rewrittenParams = { ...params, to: owner };
+  delete rewrittenParams.chat_id;
   delete rewrittenParams.reply_to;
-  return { ...parsed, params: rewrittenParams };
+  const method = parsed.method === "send.rich" ? "send" : parsed.method;
+  const changed = method !== parsed.method ||
+    rewrittenParams.chat_id !== params.chat_id ||
+    rewrittenParams.to !== params.to ||
+    Object.hasOwn(params, "reply_to");
+  return changed ? { ...parsed, method, params: rewrittenParams } : parsed;
+}
+
+/**
+ * Gateway's long-lived `imsg rpc` watcher never finishes its in-flight
+ * chat.db poll, so RPC `send` sits behind it until the websocket times out.
+ * A short-lived `imsg send` CLI process is the invocation that actually
+ * delivers on this Mac (handle for owner self-chat, chat_id for groups).
+ */
+export function buildImsgCliSendArgs(params) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    throw new TypeError("imsg CLI send requires params");
+  }
+  const args = ["send", "--json"];
+  const text = String(params.text ?? "");
+  if (text) args.push("--text", text);
+  if (typeof params.file === "string" && params.file.trim()) {
+    args.push("--file", params.file);
+  }
+  const chatId = positiveChatId(params.chat_id);
+  if (chatId !== null) args.push("--chat-id", String(chatId));
+  else if (typeof params.chat_guid === "string" && params.chat_guid.trim()) {
+    args.push("--chat-guid", params.chat_guid);
+  } else if (typeof params.chat_identifier === "string" && params.chat_identifier.trim()) {
+    args.push("--chat-identifier", params.chat_identifier);
+  } else if (params.to != null && String(params.to).trim()) {
+    args.push("--to", String(params.to).trim());
+  } else {
+    throw new Error("imsg CLI send requires a target");
+  }
+  if (!text && !(typeof params.file === "string" && params.file.trim())) {
+    throw new Error("imsg CLI send requires text or a file");
+  }
+  const service = ownerSendService(params.service);
+  if (service && service !== "auto") args.push("--service", service);
+  return args;
+}
+
+function isCliSendFrame(parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  if (parsed.id === undefined || parsed.id === null) return false;
+  if (!OWNER_SEND_METHODS.has(parsed.method)) return false;
+  return Boolean(parsed.params && typeof parsed.params === "object" && !Array.isArray(parsed.params));
+}
+
+export function rpcResultFromImsgCliSend(parsed) {
+  const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  const id = raw.message_id ?? raw.messageId ?? raw.guid ?? raw.id;
+  const messageId = typeof id === "string" && id.trim()
+    ? id.trim()
+    : typeof id === "number" && Number.isFinite(id)
+      ? String(id)
+      : undefined;
+  return {
+    ok: raw.ok !== false && raw.status !== "error",
+    status: raw.status ?? "sent",
+    transport: raw.transport ?? "applescript",
+    ...messageId ? { messageId, message_id: messageId, guid: messageId } : {},
+  };
+}
+
+function runImsgCliSend(params, timeoutMs = CLI_SEND_TIMEOUT_MS) {
+  const args = buildImsgCliSendArgs(params);
+  return new Promise((resolve, reject) => {
+    const child = spawn(DEFAULT_REAL_IMSG, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`imsg CLI send timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || stdout.trim() || `imsg CLI send exited ${code}`));
+        return;
+      }
+      const trimmed = stdout.trim();
+      try {
+        const parsed = trimmed ? JSON.parse(trimmed) : { status: "sent" };
+        resolve(rpcResultFromImsgCliSend(parsed));
+      } catch {
+        resolve({ ok: true, status: "sent", transport: "applescript" });
+      }
+    });
+  });
 }
 
 export function promoteOwnerCommand(message, policy) {
@@ -372,7 +498,47 @@ function main() {
       currentPolicy(),
       ownerSelfChatRoutes,
     );
+    if (output !== line) {
+      try {
+        const originalChatId = JSON.parse(line)?.params?.chat_id;
+        const handle = JSON.parse(output)?.params?.to;
+        process.stderr.write(
+          originalChatId != null && handle
+            ? `imsg owner route: rewrote owner send away from chat_id=${originalChatId} onto ${handle}\n`
+            : handle
+              ? `imsg owner route: stripped owner send thread metadata; keeping ${handle}\n`
+              : "imsg owner route: stripped owner send thread metadata\n",
+        );
+      } catch {
+        process.stderr.write("imsg owner route: rewrote owner send\n");
+      }
+    }
+    try {
+      const parsed = JSON.parse(output);
+      if (isCliSendFrame(parsed)) {
+        requestMethods.delete(String(parsed.id));
+        void fulfillSendViaCli(parsed);
+        return;
+      }
+    } catch {
+      // Non-JSON frames stay on the long-lived rpc transport.
+    }
     writeWithBackpressure(child.stdin, `${output}${trailingNewline ? "\n" : ""}`, process.stdin);
+  };
+  const fulfillSendViaCli = async (parsed) => {
+    try {
+      process.stderr.write("imsg owner route: delivering send via short-lived imsg CLI\n");
+      const result = await runImsgCliSend(parsed.params);
+      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result })}\n`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`imsg owner route: CLI send failed: ${message}\n`);
+      process.stdout.write(`${JSON.stringify({
+        jsonrpc: "2.0",
+        id: parsed.id,
+        error: { code: -32000, message },
+      })}\n`);
+    }
   };
   process.stdin.on("data", (chunk) => {
     stdinBuffer += stdinDecoder.write(chunk);

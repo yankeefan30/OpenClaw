@@ -339,6 +339,10 @@ function triggerIsAutonomous(trigger, jobId) {
   return ["cron", "heartbeat", "webhook", "event", "scheduled", "background"].includes(String(trigger ?? "").toLowerCase());
 }
 
+function isOrdinaryInteractiveChannel(channel) {
+  return channel === "imessage" || channel === "sms";
+}
+
 function selectorScore(record, context) {
   const selectors = record.manifest.selectors;
   if (context.jobId && selectors.jobIds.includes(context.jobId)) return 100;
@@ -688,6 +692,11 @@ export class AutonomyGovernor {
   }
 
   beforeAgentRun(event, context) {
+    const channel = String(context?.channelId ?? event?.channelId ?? event?.channel ?? "").toLowerCase();
+    const taggedMission = event?.metadata?.autonomyMissionId ?? context?.metadata?.autonomyMissionId;
+    // Ordinary iMessage/SMS user turns are not Mission work. Never require a
+    // contract, run binding, or global autonomy resume for a normal reply.
+    if (isOrdinaryInteractiveChannel(channel) && !taggedMission) return { outcome: "pass" };
     const state = this.store.snapshot();
     const resolved = this.#resolveByContext(state, context);
     if (!resolved.record) {
@@ -876,6 +885,8 @@ export class AutonomyGovernor {
   }
 
   messageSending(event, context) {
+    const channel = String(context?.channelId ?? event?.channelId ?? event?.channel ?? "").toLowerCase();
+    if (isOrdinaryInteractiveChannel(channel) && !event.metadata?.autonomyMissionId && !event.metadata?.autonomyRunId) return;
     const state = this.store.snapshot();
     const resolved = this.#resolveOutbound(state, event, context);
     if (!resolved.record) {
@@ -890,15 +901,15 @@ export class AutonomyGovernor {
       this.#recordDecision("outbound.blocked", record, { outcome: "block", category: `${record.manifest.mode}_side_effect`, reason: "Mode blocks outbound delivery." }, { channel: context.channelId });
       return { cancel: true, cancelReason: `${record.manifest.mode} mode never permits outbound delivery.` };
     }
-    const channel = String(context.channelId ?? "").toLowerCase();
-    if (!record.manifest.outbound.channels.includes(channel) || !record.manifest.outbound.targets.includes(String(event.to))) {
-      this.#recordDecision("outbound.blocked", record, { outcome: "block", category: "outbound_denied", reason: "Destination denied." }, { channel, targetHash: sha256(String(event.to)) });
+    const destination = String(context.channelId ?? "").toLowerCase();
+    if (!record.manifest.outbound.channels.includes(destination) || !record.manifest.outbound.targets.includes(String(event.to))) {
+      this.#recordDecision("outbound.blocked", record, { outcome: "block", category: "outbound_denied", reason: "Destination denied." }, { channel: destination, targetHash: sha256(String(event.to)) });
       return { cancel: true, cancelReason: "Outbound destination is outside Mission policy." };
     }
     const rawKey = event.metadata?.idempotencyKey ?? context.messageId;
     if (typeof rawKey !== "string" || rawKey.length < 8) return { cancel: true, cancelReason: "Mission outbound delivery requires an idempotency key." };
     const intentKey = `outbound:${rawKey}`;
-    const fingerprint = sha256({ missionId: record.id, channel, to: event.to, content: event.content, threadId: event.threadId });
+    const fingerprint = sha256({ missionId: record.id, channel: destination, to: event.to, content: event.content, threadId: event.threadId });
     const existing = state.intents[intentKey];
     if (existing) return { cancel: true, cancelReason: existing.fingerprint === fingerprint ? "Duplicate outbound intent suppressed." : "Outbound idempotency collision blocked." };
     const counter = counterEntry(state, record.id, this.now());

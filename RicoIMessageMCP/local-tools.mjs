@@ -1,0 +1,319 @@
+import { loadPolicy } from "./allowlist.mjs";
+import {
+  DEFAULT_CALENDAR_DAYS,
+  MAX_CALENDAR_DAYS,
+  MAX_CALENDAR_NOTES_CHARS,
+  MAX_CALENDAR_TITLE_CHARS,
+  MAX_IDEMPOTENCY_CHARS,
+  MAX_INBOX_ITEMS,
+  MAX_MAIL_BODY_CHARS,
+  MAX_SUBJECT_CHARS,
+  SERVER_NAME,
+  SERVER_VERSION,
+  defaultEmailAuthorizationPath,
+} from "./constants.mjs";
+import { authorizeEmailRecipient, loadEmailAuthorizations } from "./email-allowlist.mjs";
+import { fail } from "./errors.mjs";
+import { createLocalApps } from "./local-apps.mjs";
+
+export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: "rico_local_apps_health",
+    description: "Report whether local Mail.app, Calendar.app, and Microsoft Outlook are reachable. Returns no secrets, tokens, or account identifiers.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_mail_list_inbox",
+    description: "List a bounded number of recent Apple Mail inbox messages (metadata only). Not a full mailbox scrape.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: MAX_INBOX_ITEMS, description: "Max messages to return." },
+      },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_mail_get",
+    description: "Get one Apple Mail inbox message by id from a previous list. Body is truncated.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: {
+        id: { type: "string", minLength: 1, maxLength: 32, description: "Mail message id from rico_mail_list_inbox." },
+      },
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_mail_send",
+    description: "Send or reply from Apple Mail only to an allowlisted address (Rico person-email authorization, owner account, or recipient-guard email). Strangers are rejected.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["to", "subject", "text"],
+      properties: {
+        to: { type: "string", minLength: 3, maxLength: 254, description: "Allowlisted recipient email." },
+        subject: { type: "string", minLength: 1, maxLength: MAX_SUBJECT_CHARS },
+        text: { type: "string", minLength: 1, maxLength: MAX_MAIL_BODY_CHARS },
+        replyToId: { type: "string", minLength: 1, maxLength: 32, description: "Optional inbox message id to reply to." },
+      },
+    },
+    annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "rico_calendar_list",
+    description: "List upcoming Calendar.app events in a bounded window. Optional calendar name limits the search.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        days: { type: "integer", minimum: 1, maximum: MAX_CALENDAR_DAYS, description: "Forward window in days." },
+        calendar: { type: "string", minLength: 1, maxLength: 80, description: "Exact local calendar name." },
+      },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_calendar_upsert",
+    description: "Create or update one local Calendar.app event on a specified calendar. No attendees are invited.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["calendar", "title", "start", "end"],
+      properties: {
+        id: { type: "string", minLength: 1, maxLength: 256, description: "Existing event uid to update." },
+        calendar: { type: "string", minLength: 1, maxLength: 80, description: "Exact local calendar name." },
+        title: { type: "string", minLength: 1, maxLength: MAX_CALENDAR_TITLE_CHARS },
+        start: { type: "string", minLength: 10, maxLength: 40, description: "ISO-8601 start." },
+        end: { type: "string", minLength: 10, maxLength: 40, description: "ISO-8601 end." },
+        notes: { type: "string", maxLength: MAX_CALENDAR_NOTES_CHARS },
+        location: { type: "string", maxLength: 160 },
+      },
+    },
+    annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "rico_outlook_list_inbox",
+    description: "List a bounded number of recent Microsoft Outlook inbox messages (metadata only) on this Mac. Fails clearly if Outlook is missing.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: MAX_INBOX_ITEMS },
+      },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_outlook_get",
+    description: "Get one Outlook inbox message by id from a previous list. Body is truncated. Fails clearly if Outlook is missing.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: {
+        id: { type: "string", minLength: 1, maxLength: 32, description: "Outlook message id from rico_outlook_list_inbox." },
+      },
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_outlook_send",
+    description: "Send one governed Outlook email to a Rico-authorized person or owner account. Reuses Outlook-only person-email policy. Strangers are rejected. Fails clearly if Outlook is missing.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["to", "subject", "text"],
+      properties: {
+        to: { type: "string", minLength: 3, maxLength: 254, description: "Governed recipient email." },
+        from: { type: "string", minLength: 3, maxLength: 254, description: "Approved Rico Outlook sender account." },
+        subject: { type: "string", minLength: 1, maxLength: MAX_SUBJECT_CHARS },
+        text: { type: "string", minLength: 1, maxLength: MAX_MAIL_BODY_CHARS },
+        idempotencyKey: { type: "string", minLength: 1, maxLength: MAX_IDEMPOTENCY_CHARS },
+      },
+    },
+    annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+]);
+
+const LOCAL_TOOL_NAMES = new Set(LOCAL_TOOL_DEFINITIONS.map((tool) => tool.name));
+
+export function isLocalTool(name) {
+  return LOCAL_TOOL_NAMES.has(name);
+}
+
+export async function callLocalTool(runtime, name, args) {
+  const apps = localApps(runtime);
+  switch (name) {
+    case "rico_local_apps_health":
+      return localAppsHealth(apps);
+    case "rico_mail_list_inbox":
+      return apps.mailListInbox({ limit: args?.limit });
+    case "rico_mail_get":
+      return apps.mailGet({ id: sanitizeMessageId(args?.id) });
+    case "rico_mail_send":
+      return mailSend(runtime, apps, args);
+    case "rico_calendar_list":
+      return apps.calendarList({
+        days: args?.days ?? DEFAULT_CALENDAR_DAYS,
+        calendar: optionalName(args?.calendar, "calendar_name_invalid"),
+      });
+    case "rico_calendar_upsert":
+      return calendarUpsert(apps, args);
+    case "rico_outlook_list_inbox":
+      return apps.outlookListInbox({ limit: args?.limit });
+    case "rico_outlook_get":
+      return apps.outlookGet({ id: sanitizeMessageId(args?.id) });
+    case "rico_outlook_send":
+      return outlookSend(runtime, apps, args);
+    default:
+      throw fail("tool_not_found", "Unknown Rico local-app tool.");
+  }
+}
+
+async function localAppsHealth(apps) {
+  const [mail, calendar, outlook] = await Promise.all([
+    apps.mailHealth(),
+    apps.calendarHealth(),
+    apps.outlookHealth(),
+  ]);
+  return {
+    ok: mail.reachable === true && calendar.reachable === true,
+    bridge: SERVER_NAME,
+    version: SERVER_VERSION,
+    mail: publicAppHealth(mail),
+    calendar: publicAppHealth(calendar),
+    outlook: publicAppHealth(outlook),
+  };
+}
+
+function publicAppHealth(result) {
+  const health = {
+    installed: result.installed === true,
+    reachable: result.reachable === true,
+  };
+  if (result.configured !== undefined) health.configured = result.configured === true;
+  if (typeof result.inboxCount === "number") health.inboxCount = result.inboxCount;
+  if (typeof result.calendarCount === "number") health.calendarCount = result.calendarCount;
+  if (result.error) health.error = String(result.error).slice(0, 80);
+  return health;
+}
+
+async function mailSend(runtime, apps, args) {
+  const authorized = authorizeEmailForRuntime(runtime, args, { requireGovernedOutlook: false });
+  const subject = sanitizeSubject(args?.subject);
+  const text = sanitizeBody(args?.text);
+  const replyToId = args?.replyToId ? sanitizeMessageId(args.replyToId) : undefined;
+  return apps.mailSend({ to: authorized.email, subject, text, replyToId });
+}
+
+async function outlookSend(runtime, apps, args) {
+  const authorized = authorizeEmailForRuntime(runtime, args, { requireGovernedOutlook: true });
+  return apps.outlookSend({
+    to: authorized.email,
+    from: authorized.senderAccount,
+    subject: sanitizeSubject(args?.subject),
+    text: sanitizeBody(args?.text),
+    idempotencyKey: sanitizeIdempotency(args?.idempotencyKey),
+  });
+}
+
+function calendarUpsert(apps, args) {
+  return apps.calendarUpsert({
+    id: optionalName(args?.id, "calendar_id_invalid", 256),
+    calendar: requiredName(args?.calendar, "calendar_name_invalid", 80),
+    title: sanitizeTitle(args?.title),
+    start: args?.start,
+    end: args?.end,
+    notes: args?.notes == null || args.notes === "" ? "" : sanitizeNotes(args.notes),
+    location: args?.location == null || args.location === "" ? "" : requiredName(args.location, "calendar_location_invalid", 160),
+  });
+}
+
+function authorizeEmailForRuntime(runtime, args, { requireGovernedOutlook }) {
+  const policy = runtime.policy ?? loadPolicy(runtime.policyPath, runtime.supportDirectory);
+  const authorizations = runtime.emailAuthorizations ?? loadEmailAuthorizations(
+    runtime.emailAuthorizationPath ?? defaultEmailAuthorizationPath(),
+  );
+  return authorizeEmailRecipient({
+    policy,
+    authorizations,
+    address: args?.to,
+    from: args?.from,
+    requireGovernedOutlook,
+  });
+}
+
+function localApps(runtime) {
+  if (runtime?.localApps) return runtime.localApps;
+  return createLocalApps();
+}
+
+function sanitizeMessageId(value) {
+  const id = String(value ?? "").trim();
+  if (!/^[0-9]{1,18}$/u.test(id)) throw fail("message_id_invalid", "Message id is invalid.");
+  return id;
+}
+
+function sanitizeSubject(value) {
+  return sanitizeLine(value, MAX_SUBJECT_CHARS, "subject_invalid", "Subject is required.");
+}
+
+function sanitizeTitle(value) {
+  return sanitizeLine(value, MAX_CALENDAR_TITLE_CHARS, "calendar_title_invalid", "Event title is required.");
+}
+
+function sanitizeNotes(value) {
+  return sanitizeMultiline(value, MAX_CALENDAR_NOTES_CHARS, "calendar_notes_invalid");
+}
+
+function sanitizeBody(value) {
+  return sanitizeMultiline(value, MAX_MAIL_BODY_CHARS, "text_invalid");
+}
+
+function sanitizeLine(value, maxChars, code, emptyMessage) {
+  const text = String(value ?? "").normalize("NFC").replace(/\r\n/gu, "\n").trim();
+  if (!text) throw fail(code, emptyMessage);
+  if ([...text].length > maxChars || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text) || /\n/.test(text)) {
+    throw fail(code, emptyMessage);
+  }
+  return text;
+}
+
+function sanitizeMultiline(value, maxChars, code) {
+  const text = String(value ?? "").normalize("NFC").replace(/\r\n/gu, "\n");
+  if (!text.trim()) throw fail(code, "Message text is required.");
+  if ([...text].length > maxChars || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
+    throw fail(code, "Message text is invalid.");
+  }
+  return text;
+}
+
+function requiredName(value, code, maxChars) {
+  const text = String(value ?? "").normalize("NFC").trim();
+  if (!text || [...text].length > maxChars || /[\u0000-\u001f\u007f]/.test(text)) {
+    throw fail(code, "Name is invalid.");
+  }
+  return text;
+}
+
+function optionalName(value, code, maxChars = 80) {
+  if (value == null || value === "") return undefined;
+  return requiredName(value, code, maxChars);
+}
+
+function sanitizeIdempotency(value) {
+  if (value == null || value === "") return `rico-outlook-mcp-${Date.now()}`;
+  const key = String(value).trim();
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) {
+    throw fail("idempotency_invalid", "idempotencyKey must be 1-128 URL-safe characters.");
+  }
+  return key;
+}

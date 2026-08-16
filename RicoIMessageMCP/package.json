@@ -1,0 +1,19 @@
+{
+  "name": "rico-imessage-mcp",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "rico-imessage-mcp": "./index.mjs"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "stdio": "node index.mjs --stdio",
+    "test": "node --test tests/*.test.mjs",
+    "selftest": "node index.mjs --selftest",
+    "init-token": "node index.mjs --init-token"
+  }
+}

@@ -51,6 +51,11 @@ test("unbound interactive traffic and ordinary cron pass without a Mission overl
   ).outcome, "pass");
   assert.equal(governor.beforeToolCall({ toolName: "write_file", params: {}, toolCallId: "x" }, { sessionKey: "owner", runId: "manual" }), undefined);
   assert.equal(governor.messageSending({ to: "+1", content: "hi" }, { channelId: "imessage", sessionKey: "owner" }), undefined);
+  assert.equal(governor.beforeAgentRun(
+    { senderIsOwner: true, channelId: "sms", senderId: "+15551234567" },
+    { trigger: "user", channelId: "sms", sessionKey: "agent:main:sms:default:direct:+15551234567" },
+  ).outcome, "pass");
+  assert.equal(governor.messageSending({ to: "+15551234567", content: "hi" }, { channelId: "sms", sessionKey: "agent:main:sms:default:direct:+15551234567" }), undefined);
   assert.equal(governor.beforeAgentRun({}, { trigger: "cron", jobId: "unknown", runId: "cron-1" }).outcome, "pass");
   assert.equal(governor.beforeAgentRun({}, { trigger: "heartbeat", runId: "hb-1" }).outcome, "pass");
 });

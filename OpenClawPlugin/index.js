@@ -480,7 +480,8 @@ export default definePluginEntry({
           category: "shared_prompt_context_changed",
         };
       }
-      if (!sessionAttestations.verifyOrAttest({
+      const ownerDirect = senderContext.isOwner === true && senderContext.conversationType === "direct";
+      if (!ownerDirect && !sessionAttestations.verifyOrAttest({
         sessionId: ctx.sessionId,
         audienceFingerprint: senderContext.audienceFingerprint,
         messages: event.messages,

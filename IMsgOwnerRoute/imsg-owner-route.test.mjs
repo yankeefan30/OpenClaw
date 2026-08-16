@@ -12,6 +12,8 @@ import {
   observeOwnerSelfChat,
   promoteOwnerCommand,
   rewriteOwnerSelfChatSend,
+  buildImsgCliSendArgs,
+  rpcResultFromImsgCliSend,
   trackRpcRequest,
   transformRequestLine,
   transformResponseLine,
@@ -155,7 +157,7 @@ test("catchup never promotes owner commands from before route activation", () =>
   assert.equal(transformed.result.messages[1].is_from_me, true);
 });
 
-test("rewrites an exact owner direct self-chat reply to the observed chat id", () => {
+test("rewrites an exact owner direct self-chat reply onto the owner handle", () => {
   const now = activation + 2_000;
   const routes = createOwnerSelfChatRouteCache({ ttlMs: 60_000, now: () => now });
   const methods = new Map();
@@ -172,14 +174,90 @@ test("rewrites an exact owner direct self-chat reply to the observed chat id", (
   const request = ownerSend();
   const rewritten = rewriteOwnerSelfChatSend(request, policy, routes, now + 1);
   assert.notEqual(rewritten, request);
-  assert.equal(rewritten.params.chat_id, 77);
-  assert.equal(Object.hasOwn(rewritten.params, "to"), false);
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
   assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
   assert.equal(rewritten.params.text, request.params.text);
   assert.equal(rewritten.params.service, "imessage");
-  assert.equal(rewritten.params.transport, "applescript");
   assert.equal(request.params.to, owner);
   assert.equal(request.params.reply_to, "historical-thread-guid");
+});
+
+test("strips owner self-chat thread metadata even without a live chat-id route", () => {
+  const request = ownerSend();
+  const rewritten = rewriteOwnerSelfChatSend(request, policy, createOwnerSelfChatRouteCache({ ttlMs: 60_000 }));
+  assert.notEqual(rewritten, request);
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
+  assert.equal(request.params.reply_to, "historical-thread-guid");
+});
+
+test("rewrites owner sends that use auto service or send.rich onto the owner handle", () => {
+  const durable = validateRoutePolicy({
+    schemaVersion: 1,
+    enabled: true,
+    ownerHandles: [owner],
+    allowedGroupChatIds: [24],
+    notBeforeMs: activation,
+    ownerDirectChatId: 570,
+  });
+  const autoSend = rewriteOwnerSelfChatSend(
+    ownerSend({ service: "auto" }),
+    durable,
+    createOwnerSelfChatRouteCache({ ttlMs: 60_000 }),
+  );
+  assert.equal(autoSend.params.to, owner);
+  assert.equal(Object.hasOwn(autoSend.params, "chat_id"), false);
+  const rich = rewriteOwnerSelfChatSend(
+    ownerSend({ service: "iMessage" }, "send.rich"),
+    durable,
+    createOwnerSelfChatRouteCache({ ttlMs: 60_000 }),
+  );
+  assert.equal(rich.method, "send");
+  assert.equal(rich.params.to, owner);
+  assert.equal(Object.hasOwn(rich.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(rich.params, "reply_to"), false);
+});
+
+test("rewrites owner chat_id sends onto the owner handle instead of AppleScript chat_id", () => {
+  const durable = validateRoutePolicy({
+    schemaVersion: 1,
+    enabled: true,
+    ownerHandles: [owner],
+    allowedGroupChatIds: [24],
+    notBeforeMs: activation,
+    ownerDirectChatId: 570,
+  });
+  const rewritten = rewriteOwnerSelfChatSend(
+    {
+      jsonrpc: "2.0",
+      id: 202,
+      method: "send",
+      params: { chat_id: 570, text: "Rico check", service: "imessage", transport: "auto" },
+    },
+    durable,
+    createOwnerSelfChatRouteCache({ ttlMs: 60_000 }),
+  );
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+  assert.equal(rewritten.params.transport, "auto");
+  assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
+});
+
+test("does not retarget owner-handle sends onto the hanging self-chat id", () => {
+  const durable = validateRoutePolicy({
+    schemaVersion: 1,
+    enabled: true,
+    ownerHandles: [owner],
+    allowedGroupChatIds: [24],
+    notBeforeMs: activation,
+    ownerDirectChatId: 570,
+  });
+  const rewritten = rewriteOwnerSelfChatSend(ownerSend(), durable, createOwnerSelfChatRouteCache({ ttlMs: 60_000 }));
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
 });
 
 test("the request line relay rewrites only the exact self-chat send", () => {
@@ -192,8 +270,8 @@ test("the request line relay rewrites only the exact self-chat send", () => {
   const output = transformRequestLine(input, methods, policy, routes, now + 1);
   const parsed = JSON.parse(output);
 
-  assert.equal(parsed.params.chat_id, 77);
-  assert.equal(Object.hasOwn(parsed.params, "to"), false);
+  assert.equal(parsed.params.to, owner);
+  assert.equal(Object.hasOwn(parsed.params, "chat_id"), false);
   assert.equal(Object.hasOwn(parsed.params, "reply_to"), false);
   assert.equal(methods.get(String(request.id)), "send");
 });
@@ -215,9 +293,11 @@ test("never learns a self-chat route from group, nonowner, mismatched, or stale 
     assert.equal(observeOwnerSelfChat(message, policy, routes, now), false);
     assert.equal(routes.size, 0);
     const request = ownerSend();
-    const untouched = rewriteOwnerSelfChatSend(request, policy, routes, now + 1);
-    assert.equal(untouched, request);
-    assert.equal(untouched.params.reply_to, "historical-thread-guid");
+    const rewritten = rewriteOwnerSelfChatSend(request, policy, routes, now + 1);
+    assert.equal(rewritten.params.to, owner);
+    assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+    assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
+    assert.equal(request.params.reply_to, "historical-thread-guid");
   }
 });
 
@@ -233,7 +313,10 @@ test("does not seed the live self-chat route from messages.history", () => {
   };
   transformRpcFrame(response, methods, policy, routes, now);
   assert.equal(routes.size, 0);
-  assert.equal(rewriteOwnerSelfChatSend(ownerSend(), policy, routes, now + 1).params.to, owner);
+  const rewritten = rewriteOwnerSelfChatSend(ownerSend(), policy, routes, now + 1);
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
 });
 
 test("fails closed when policy is null or paused and invalidates prior evidence", () => {
@@ -253,7 +336,10 @@ test("fails closed when policy is null or paused and invalidates prior evidence"
     assert.equal(untouched, request);
     assert.equal(untouched.params.reply_to, "historical-thread-guid");
     assert.equal(routes.size, 0);
-    assert.equal(rewriteOwnerSelfChatSend(request, policy, routes, now + 2), request);
+    const afterUnavailable = rewriteOwnerSelfChatSend(request, policy, routes, now + 2);
+    assert.equal(afterUnavailable.params.to, owner);
+    assert.equal(Object.hasOwn(afterUnavailable.params, "chat_id"), false);
+    assert.equal(Object.hasOwn(afterUnavailable.params, "reply_to"), false);
   }
 });
 
@@ -262,7 +348,10 @@ test("expires the process-local self-chat route and rejects a newer policy fence
   const routes = createOwnerSelfChatRouteCache({ ttlMs: 100 });
   assert.equal(observeOwnerSelfChat(ownerSelfChatMessage(), policy, routes, now), true);
   const request = ownerSend();
-  assert.equal(rewriteOwnerSelfChatSend(request, policy, routes, now + 101), request);
+  const expired = rewriteOwnerSelfChatSend(request, policy, routes, now + 101);
+  assert.equal(expired.params.to, owner);
+  assert.equal(Object.hasOwn(expired.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(expired.params, "reply_to"), false);
   assert.equal(request.params.reply_to, "historical-thread-guid");
   assert.equal(routes.size, 0);
 
@@ -274,11 +363,14 @@ test("expires the process-local self-chat route and rejects a newer policy fence
     allowedGroupChatIds: [24],
     notBeforeMs: activation + 1_500,
   });
-  assert.equal(rewriteOwnerSelfChatSend(request, refencedPolicy, routes, now + 1), request);
+  const fenced = rewriteOwnerSelfChatSend(request, refencedPolicy, routes, now + 1);
+  assert.equal(fenced.params.to, owner);
+  assert.equal(Object.hasOwn(fenced.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(fenced.params, "reply_to"), false);
   assert.equal(routes.size, 0);
 });
 
-test("preserves ordinary direct, group, nonowner, arbitrary-method, auto, and SMS sends", () => {
+test("preserves ordinary direct, group, nonowner, arbitrary-method, and SMS sends", () => {
   const now = activation + 2_000;
   const freshRoutes = () => {
     const routes = createOwnerSelfChatRouteCache({ ttlMs: 60_000 });
@@ -292,7 +384,6 @@ test("preserves ordinary direct, group, nonowner, arbitrary-method, auto, and SM
     ownerSend({ chat_guid: "iMessage;+;group-guid" }),
     ownerSend({ chat_identifier: "iMessage;+;group-identifier" }),
     ownerSend({}, "typing"),
-    ownerSend({ service: "auto" }),
     ownerSend({ service: "sms" }),
   ];
 
@@ -309,7 +400,38 @@ test("keeps the self-chat cache bounded to the sole most recently observed owner
   assert.equal(observeOwnerSelfChat(ownerSelfChatMessage({ chat_id: 77 }), policy, routes, now), true);
   assert.equal(observeOwnerSelfChat(ownerSelfChatMessage({ chat_id: 78 }), policy, routes, now + 1), true);
   assert.equal(routes.size, 1);
-  assert.equal(rewriteOwnerSelfChatSend(ownerSend(), policy, routes, now + 2).params.chat_id, 78);
+  const rewritten = rewriteOwnerSelfChatSend(ownerSend(), policy, routes, now + 2);
+  assert.equal(rewritten.params.to, owner);
+  assert.equal(Object.hasOwn(rewritten.params, "chat_id"), false);
+  assert.equal(Object.hasOwn(rewritten.params, "reply_to"), false);
+});
+
+test("builds CLI send args for owner handles and group chat ids", () => {
+  assert.deepEqual(
+    buildImsgCliSendArgs({ to: owner, text: "Rico check", service: "imessage" }),
+    ["send", "--json", "--text", "Rico check", "--to", owner, "--service", "imessage"],
+  );
+  assert.deepEqual(
+    buildImsgCliSendArgs({ chat_id: 24, text: "group ping", service: "auto" }),
+    ["send", "--json", "--text", "group ping", "--chat-id", "24"],
+  );
+  assert.throws(() => buildImsgCliSendArgs({ text: "missing target" }), /target/);
+});
+
+test("CLI send receipts expose messageId for Gateway health", () => {
+  assert.deepEqual(
+    rpcResultFromImsgCliSend({ status: "sent", message_id: "ABCD-1234" }),
+    {
+      ok: true,
+      status: "sent",
+      transport: "applescript",
+      messageId: "ABCD-1234",
+      message_id: "ABCD-1234",
+      guid: "ABCD-1234",
+    },
+  );
+  assert.equal(rpcResultFromImsgCliSend({ status: "sent" }).ok, true);
+  assert.equal(Object.hasOwn(rpcResultFromImsgCliSend({ status: "sent" }), "messageId"), false);
 });
 
 test("preserves unknown, non-JSON, and unchanged JSON lines exactly", () => {

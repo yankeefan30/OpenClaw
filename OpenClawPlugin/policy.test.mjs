@@ -97,6 +97,52 @@ test("owner direct chats do not require an @rico mention", () => {
   ])).allow, false);
 });
 
+test("owner self-chat chat ids are the same outbound identity as the owner handle", () => {
+  const owner = {
+    target: "+15550000001",
+    kind: "individual",
+    access: "owner",
+    requireMention: false,
+    autoReply: true,
+    quietStart: 0,
+    quietEnd: 0,
+    directChatId: 570,
+  };
+  const registry = policy([owner]);
+  assert.equal(outboundIdentity(registry, "+15550000001").access, "owner");
+  assert.equal(outboundIdentity(registry, "chat_id:570").access, "owner");
+  assert.equal(outboundIdentity(registry, "chat_id:24"), undefined);
+});
+
+test("owner direct chats skip quiet hours", () => {
+  const owner = {
+    target: "+15550000001",
+    kind: "individual",
+    access: "owner",
+    requireMention: false,
+    autoReply: true,
+    quietStart: 22,
+    quietEnd: 8,
+  };
+  const late = new Date();
+  late.setHours(23, 0, 0, 0);
+  const contact = {
+    target: "+15550000002",
+    kind: "individual",
+    access: "approved",
+    requireMention: false,
+    autoReply: true,
+    quietStart: 22,
+    quietEnd: 8,
+  };
+  assert.equal(evaluateInbound({
+    channel: "imessage", senderId: "+15550000001", isGroup: false, content: "are you there",
+  }, {}, policy([owner]), late).allow, true);
+  assert.equal(evaluateInbound({
+    channel: "imessage", senderId: "+15550000002", isGroup: false, content: "are you there",
+  }, {}, policy([contact]), late).allow, false);
+});
+
 test("the owner-route command prefix is recognized exactly for loop prevention", () => {
   assert.equal(isOwnerRouteTrigger(" @RICO: do this"), true);
   assert.equal(isOwnerRouteTrigger("hello @rico"), false);

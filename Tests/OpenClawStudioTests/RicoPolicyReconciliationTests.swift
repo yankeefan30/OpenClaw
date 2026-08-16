@@ -605,6 +605,8 @@ struct RicoPolicyReconciliationTests {
         #expect(loop.contains("paintsVerifiedImmediately"))
         #expect(loop.contains("forceFullProjection"))
         #expect(loop.contains("skipNextProjection"))
+        #expect(source.contains("UI ok, Gateway not sending"))
+        #expect(source.contains("Confirming Gateway"))
         #expect(!loop.contains("try await Task.sleep(nanoseconds: RicoProjectionRetryPolicy.launchDebounceNanoseconds)"))
         #expect(source.contains("forceFullProjection: true"))
         #expect(source.components(separatedBy: "forceFullProjection: true").count - 1 == 1)
