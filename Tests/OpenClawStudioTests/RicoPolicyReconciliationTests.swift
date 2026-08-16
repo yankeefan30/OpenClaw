@@ -6,7 +6,7 @@ import Testing
 @Suite("Rico policy reconciliation stability")
 struct RicoPolicyReconciliationTests {
     @MainActor
-    @Test("Missing intent starts admission-quarantined without inventing an explicit Pause")
+    @Test("Missing intent stays unpaused and does not invent an explicit Pause")
     func missingIntentIsUnreviewedQuarantine() throws {
         let name = "rico-intent-tests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
@@ -16,9 +16,9 @@ struct RicoPolicyReconciliationTests {
         let state = RicoPauseIntentStore.load(from: defaults)
         #expect(state == RicoPauseIntentState(paused: false, reviewed: false))
         #expect(defaults.object(forKey: RicoPauseIntentStore.pausedKey) == nil)
-        #expect(RicoProjectionMode.desired(paused: state.paused, reviewed: state.reviewed) == .healthQuarantine)
+        #expect(RicoProjectionMode.desired(paused: state.paused, reviewed: state.reviewed) == .active)
         #expect(RicoProjectionMode.healthQuarantine.channelEnabled)
-        #expect(RicoProjectionMode.healthQuarantine.admissionPaused)
+        #expect(!RicoProjectionMode.healthQuarantine.admissionPaused)
     }
 
     @MainActor
@@ -71,7 +71,7 @@ struct RicoPolicyReconciliationTests {
         #expect(defaults.integer(forKey: RicoPauseIntentStore.versionKey) == RicoPauseIntentStore.currentVersion)
 
         for _ in 0..<4 {
-            #expect(RicoProjectionRecoveryPolicy.fallback(for: .active) == .healthQuarantine)
+            #expect(RicoProjectionRecoveryPolicy.fallback(for: .active) == .active)
             #expect(defaults.bool(forKey: RicoPauseIntentStore.pausedKey) == false)
         }
         RicoPauseIntentStore.recordExplicit(true, in: defaults)
@@ -91,7 +91,7 @@ struct RicoPolicyReconciliationTests {
         let state = RicoPauseIntentStore.load(from: defaults)
         #expect(state == RicoPauseIntentState(paused: false, reviewed: false))
         #expect(defaults.integer(forKey: RicoPauseIntentStore.versionKey) == 0)
-        #expect(RicoProjectionMode.desired(paused: state.paused, reviewed: state.reviewed) == .healthQuarantine)
+        #expect(RicoProjectionMode.desired(paused: state.paused, reviewed: state.reviewed) == .active)
         #expect(RicoProjectionMode.desired(paused: state.paused, reviewed: state.reviewed).channelEnabled)
     }
 
@@ -102,22 +102,27 @@ struct RicoPolicyReconciliationTests {
         #expect(!RicoProjectionMode.explicitPause.channelEnabled)
         #expect(RicoProjectionMode.explicitPause.admissionPaused)
         #expect(RicoProjectionMode.healthQuarantine.channelEnabled)
-        #expect(RicoProjectionMode.healthQuarantine.admissionPaused)
+        #expect(!RicoProjectionMode.healthQuarantine.admissionPaused)
 
         let owner = RicoRecipientPolicy(
             id: "owner", contactID: "owner", displayName: "Owner", address: "+15550000001",
-            access: .owner, requireMention: true, autoReply: true,
+            access: .owner, requireMention: false, autoReply: true,
             quietStart: 0, quietEnd: 0, groupChatID: nil
         )
-        let quarantined = RicoNativePolicyProjection.plan(
-            policies: [owner], paused: true, channelEnabledOverride: true
+        let health = RicoNativePolicyProjection.plan(
+            policies: [owner], paused: RicoProjectionMode.healthQuarantine.admissionPaused, channelEnabledOverride: true
         )
-        #expect(quarantined.channelEnabled)
-        #expect(quarantined.dmPolicy == "disabled")
-        #expect(quarantined.groupPolicy == "disabled")
-        #expect(quarantined.allowFrom.isEmpty)
-        #expect(quarantined.ownerAllowFrom.isEmpty)
-        #expect(quarantined.sharedBindingTargets.isEmpty)
+        #expect(health.channelEnabled)
+        #expect(health.dmPolicy == "allowlist")
+        #expect(!health.allowFrom.isEmpty)
+        #expect(!health.ownerAllowFrom.isEmpty)
+        let explicit = RicoNativePolicyProjection.plan(
+            policies: [owner], paused: true, channelEnabledOverride: false
+        )
+        #expect(!explicit.channelEnabled)
+        #expect(explicit.dmPolicy == "disabled")
+        #expect(explicit.allowFrom.isEmpty)
+        #expect(explicit.ownerAllowFrom.isEmpty)
     }
 
     @Test("Every transient verification class chooses the same non-persistent quarantine")
@@ -131,19 +136,97 @@ struct RicoPolicyReconciliationTests {
         ]
         for _ in transientFailures {
             let fallback = RicoProjectionRecoveryPolicy.fallback(for: .active)
-            #expect(fallback == .healthQuarantine)
+            #expect(fallback == .active)
             #expect(fallback.channelEnabled)
-            #expect(fallback.admissionPaused)
+            #expect(!fallback.admissionPaused)
         }
         #expect(RicoProjectionRecoveryPolicy.fallback(for: .explicitPause) == .explicitPause)
     }
 
     @Test("Active recovery is staged paused and a healthy audit cannot repair while admitted")
     func activeAttemptBoundaries() {
-        #expect(RicoActiveProjectionAttempt.stagedActivation.initialGuardPaused)
+        #expect(!RicoActiveProjectionAttempt.stagedActivation.initialGuardPaused)
         #expect(RicoActiveProjectionAttempt.stagedActivation.mayRepairNativeConfig)
         #expect(!RicoActiveProjectionAttempt.healthyAudit.initialGuardPaused)
         #expect(!RicoActiveProjectionAttempt.healthyAudit.mayRepairNativeConfig)
+    }
+
+    @Test("An unpaused matching launch skips staged activation and launch debounce")
+    func launchSkipsStagedActivationWhenAlreadyAligned() {
+        let owner = RicoRecipientPolicy(
+            id: "owner", contactID: "owner", displayName: "Owner", address: "+15550000001",
+            access: .owner, requireMention: false, autoReply: true,
+            quietStart: 0, quietEnd: 0, groupChatID: nil
+        )
+        let plan = RicoNativePolicyProjection.plan(
+            policies: [owner], paused: false, channelEnabledOverride: true
+        )
+        let raw: [String: Any] = [
+            "channels": [
+                "imessage": [
+                    "enabled": true,
+                    "dmPolicy": plan.dmPolicy,
+                    "allowFrom": plan.allowFrom,
+                    "groupPolicy": plan.groupPolicy,
+                    "groupAllowFrom": plan.groupAllowFrom,
+                    "groups": plan.groups,
+                ],
+            ],
+            "commands": ["ownerAllowFrom": plan.ownerAllowFrom],
+        ]
+        #expect(RicoNativePolicyProjection.reviewedAllowlistsMatchNativeConfig(
+            policies: [owner],
+            rawConfig: raw
+        ))
+        var drifted = raw
+        drifted["channels"] = [
+            "imessage": [
+                "enabled": true,
+                "dmPolicy": "disabled",
+                "allowFrom": [String](),
+                "groupPolicy": plan.groupPolicy,
+                "groupAllowFrom": plan.groupAllowFrom,
+                "groups": plan.groups,
+            ],
+        ]
+        #expect(!RicoNativePolicyProjection.reviewedAllowlistsMatchNativeConfig(
+            policies: [owner],
+            rawConfig: drifted
+        ))
+
+        #expect(RicoLaunchPolicySync.decide(
+            desiredMode: .active,
+            liveGuardPaused: false,
+            nativeAllowlistsMatch: true
+        ) == .alreadyAligned)
+        #expect(RicoLaunchPolicySync.alreadyAligned.paintsVerifiedImmediately)
+        #expect(RicoLaunchPolicySync.decide(
+            desiredMode: .active,
+            liveGuardPaused: false,
+            nativeAllowlistsMatch: false
+        ) == .needsStagedActivation)
+        #expect(RicoLaunchPolicySync.decide(
+            desiredMode: .active,
+            liveGuardPaused: true,
+            nativeAllowlistsMatch: true
+        ) == .needsStagedActivation)
+        #expect(RicoLaunchPolicySync.decide(
+            desiredMode: .explicitPause,
+            liveGuardPaused: true,
+            nativeAllowlistsMatch: false
+        ) == .explicitPause)
+        #expect(RicoLaunchPolicySync.shouldSkipLaunchDebounce(
+            desiredMode: .active,
+            liveGuardPaused: false
+        ))
+        #expect(!RicoLaunchPolicySync.shouldSkipLaunchDebounce(
+            desiredMode: .active,
+            liveGuardPaused: true
+        ))
+        #expect(!RicoLaunchPolicySync.shouldSkipLaunchDebounce(
+            desiredMode: .active,
+            liveGuardPaused: nil
+        ))
     }
 
     @MainActor
@@ -280,19 +363,16 @@ struct RicoPolicyReconciliationTests {
             range: recoveryStart.upperBound..<source.endIndex
         ))
         let recoverySource = String(source[recoveryStart.lowerBound..<recoveryEnd.lowerBound])
-        let nativeQuarantine = try #require(recoverySource.range(of: "RicoNativePolicyProjection.emergencyQuarantine("))
-        #expect(recoverySource.contains("mode: RicoProjectionRecoveryPolicy.fallback(for: liveMode)"))
+        #expect(!recoverySource.contains("RicoNativePolicyProjection.emergencyQuarantine("))
         #expect(!recoverySource.contains("mode: .healthQuarantine"))
-        let retryPair = try #require(recoverySource.range(
-            of: "RicoRecipientGuard.stagePausedPolicyPair(policies: proposedPolicies)",
-            range: nativeQuarantine.upperBound..<recoverySource.endIndex
+        let retryWrite = try #require(recoverySource.range(
+            of: "RicoRecipientGuard.writePolicy(policies: proposedPolicies, paused: false)"
         ))
         let acceptPending = try #require(recoverySource.range(
             of: "UserDefaults.standard.set(encodedPolicies, forKey: \"rico.policies\")",
-            range: retryPair.upperBound..<recoverySource.endIndex
+            range: retryWrite.upperBound..<recoverySource.endIndex
         ))
-        #expect(nativeQuarantine.lowerBound < retryPair.lowerBound)
-        #expect(retryPair.lowerBound < acceptPending.lowerBound)
+        #expect(retryWrite.lowerBound < acceptPending.lowerBound)
     }
 
     @MainActor
@@ -310,26 +390,8 @@ struct RicoPolicyReconciliationTests {
         }
     }
 
-    @Test("A failed active proof must re-pause, and failed re-pause is a hard boundary error")
-    func failedRePauseIsHardFailure() async {
-        let admission = ActivationAdmissionHarness(failPausedWrite: true)
-        do {
-            try await RicoFinalActivationBoundary.activate(
-                attestCurrent: {},
-                writePaused: { paused in try await admission.write(paused) },
-                proveActive: { throw ActivationTestError.proofFailed }
-            )
-            Issue.record("Activation must not succeed after its active proof fails")
-        } catch let error as RicoFinalActivationBoundary.BoundaryError {
-            #expect(error == .requarantineFailed)
-        } catch {
-            Issue.record("Failed re-pause must be promoted to the hard boundary error")
-        }
-        #expect(await admission.values() == [false])
-    }
-
-    @Test("A failed active proof restores pause before returning its proof error")
-    func failedProofRestoresPause() async {
+    @Test("A failed active proof leaves admission open instead of re-pausing")
+    func failedProofLeavesAdmissionOpen() async {
         let admission = ActivationAdmissionHarness(failPausedWrite: false)
         do {
             try await RicoFinalActivationBoundary.activate(
@@ -339,32 +401,22 @@ struct RicoPolicyReconciliationTests {
             )
             Issue.record("Activation must not succeed after its active proof fails")
         } catch ActivationTestError.proofFailed {
-            // Expected only after the successful re-pause.
+            // Expected. The live unpaused write is not rolled back to paused.
         } catch {
-            Issue.record("The original proof error should escape after re-pause")
+            Issue.record("The original proof error should escape without a re-pause")
         }
-        #expect(await admission.values() == [false, true])
+        #expect(await admission.values() == [false])
     }
 
-    @Test("A partial activation-sidecar write is re-paused before its error escapes")
-    func partialActivationWriteRestoresPause() async {
-        let admission = ActivationAdmissionHarness(
-            failPausedWrite: false,
-            failActiveAfterWrite: true
+    @Test("A successful activation writes unpaused and does not re-pause")
+    func successfulActivationStaysUnpaused() async throws {
+        let admission = ActivationAdmissionHarness(failPausedWrite: false)
+        try await RicoFinalActivationBoundary.activate(
+            attestCurrent: {},
+            writePaused: { paused in try await admission.write(paused) },
+            proveActive: {}
         )
-        do {
-            try await RicoFinalActivationBoundary.activate(
-                attestCurrent: {},
-                writePaused: { paused in try await admission.write(paused) },
-                proveActive: {}
-            )
-            Issue.record("A partial active write must not complete activation")
-        } catch ActivationTestError.activeWriteFailed {
-            // Expected only after pause has been restored.
-        } catch {
-            Issue.record("The partial active-write error should escape after re-pause")
-        }
-        #expect(await admission.values() == [false, true])
+        #expect(await admission.values() == [false])
     }
 
     @Test("Runtime failure handling cannot persist pause intent or mutate the UI toggle")
@@ -388,9 +440,11 @@ struct RicoPolicyReconciliationTests {
         #expect(!failureLoop.contains("globalPaused ="))
         #expect(!failureLoop.contains("channels.imessage.enabled"))
         #expect(source.components(separatedBy: "persistExplicitPauseIntent: true").count - 1 == 1)
-        #expect(!source.contains("writePolicy(policies: canonicalPolicies, paused: proposedPause)"))
+        #expect(source.contains("writePolicy(policies: canonicalPolicies, paused: false)"))
         #expect(source.contains("stagePausedPolicyPair(policies: canonicalPolicies)"))
         #expect(!failureLoop.contains("writePolicy(policies: snapshot, paused: true)"))
+        #expect(!failureLoop.contains("try await writeAdmissionPaused(true)"))
+        #expect(!failureLoop.contains("RicoNativePolicyProjection.emergencyQuarantine("))
 
         let commitStart = try #require(source.range(of: "    private func commitPolicySnapshot"))
         let commitEnd = try #require(source.range(
@@ -399,30 +453,11 @@ struct RicoPolicyReconciliationTests {
         ))
         let commit = String(source[commitStart.lowerBound..<commitEnd.lowerBound])
         let invalidation = try #require(commit.range(of: "projectionEpochAuthority.invalidate()"))
-        let stagedWrite = try #require(commit.range(
-            of: "try RicoRecipientGuard.stagePausedPolicyPair(policies: canonicalPolicies)",
+        let unpausedWrite = try #require(commit.range(
+            of: "try RicoRecipientGuard.writePolicy(policies: canonicalPolicies, paused: false)",
             range: invalidation.upperBound..<commit.endIndex
         ))
-        #expect(invalidation.lowerBound < stagedWrite.lowerBound)
-
-        #expect(!failureLoop.contains("try? RicoRecipientGuard.writePolicy"))
-        let pauseBoundary = try #require(failureLoop.range(
-            of: "try await writeAdmissionPaused(true)"
-        ))
-        let quarantineProjection = try #require(failureLoop.range(
-            of: "RicoProjectionRecoveryPolicy.fallback(for: desiredMode)",
-            range: pauseBoundary.upperBound..<failureLoop.endIndex
-        ))
-        #expect(pauseBoundary.lowerBound < quarantineProjection.lowerBound)
-        let pauseFailureCatch = try #require(failureLoop.range(
-            of: "let pairError = error",
-            range: pauseBoundary.upperBound..<failureLoop.endIndex
-        ))
-        let independentEmergency = try #require(failureLoop.range(
-            of: "RicoNativePolicyProjection.emergencyQuarantine(",
-            range: pauseFailureCatch.upperBound..<failureLoop.endIndex
-        ))
-        #expect(pauseFailureCatch.lowerBound < independentEmergency.lowerBound)
+        #expect(invalidation.lowerBound < unpausedWrite.lowerBound)
     }
 
     @Test("Final activation unpauses only after paused proof and immediately re-proves active")
@@ -435,25 +470,16 @@ struct RicoPolicyReconciliationTests {
             contentsOf: repository.appendingPathComponent("Sources/OpenClawStudio/RicoCommunicationsView.swift"),
             encoding: .utf8
         )
-        let finalStage = try #require(source.range(
-            of: "// Native config, strict-local routing, hooks, tools, and"
+        let activation = try #require(source.range(
+            of: "try await RicoFinalActivationBoundary.activate("
         ))
-        let tail = String(source[finalStage.lowerBound...])
-        let pausedProof = try #require(tail.range(of: "try await requireStableLiveGuardStatus(paused: true)"))
-        let activation = try #require(tail.range(
-            of: "try await RicoFinalActivationBoundary.activate(",
-            range: pausedProof.upperBound..<tail.endIndex
-        ))
-        let epochBoundWriter = try #require(tail.range(
-            of: "writePaused: writeAdmissionPaused",
-            range: activation.upperBound..<tail.endIndex
-        ))
+        let tail = String(source[activation.lowerBound...])
+        let epochBoundWriter = try #require(tail.range(of: "writePaused: writeAdmissionPaused"))
         let activeProof = try #require(tail.range(
             of: "try await requireStableLiveGuardStatus(paused: false)",
             range: epochBoundWriter.upperBound..<tail.endIndex
         ))
-        #expect(pausedProof.lowerBound < activation.lowerBound)
-        #expect(activation.lowerBound < epochBoundWriter.lowerBound)
+        #expect(!tail.contains("try await requireStableLiveGuardStatus(paused: true)"))
         #expect(epochBoundWriter.lowerBound < activeProof.lowerBound)
     }
 
@@ -545,9 +571,12 @@ struct RicoPolicyReconciliationTests {
         }
     }
 
-    @Test("Retry cadence debounces startup and converges to a bounded watchdog")
+    @Test("Retry cadence skips a healthy launch debounce and converges to a bounded watchdog")
     func retryCadence() {
-        #expect(RicoProjectionRetryPolicy.delay(afterFailure: 0) == 750_000_000)
+        #expect(RicoProjectionRetryPolicy.delay(afterFailure: 0) == 0)
+        #expect(RicoProjectionRetryPolicy.launchDelayNanoseconds(liveGuardPaused: false) == 0)
+        #expect(RicoProjectionRetryPolicy.launchDelayNanoseconds(liveGuardPaused: true) == 750_000_000)
+        #expect(RicoProjectionRetryPolicy.launchDelayNanoseconds(liveGuardPaused: nil) == 750_000_000)
         #expect(RicoProjectionRetryPolicy.delay(afterFailure: 1) == 1_000_000_000)
         #expect(RicoProjectionRetryPolicy.delay(afterFailure: 2) == 2_000_000_000)
         #expect(RicoProjectionRetryPolicy.delay(afterFailure: 3) == 15_000_000_000)
@@ -555,9 +584,54 @@ struct RicoPolicyReconciliationTests {
         #expect(RicoProjectionRetryPolicy.healthyAuditNanoseconds == 30_000_000_000)
     }
 
+    @Test("Launch paints verified from a cheap local match and keeps Retry as a full re-verify")
+    func launchFastPathKeepsRetryAsFullReverify() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: repository.appendingPathComponent("Sources/OpenClawStudio/RicoCommunicationsView.swift"),
+            encoding: .utf8
+        )
+        let start = try #require(source.range(of: "    private func scheduleNativeProjection"))
+        let end = try #require(source.range(
+            of: "\n}\n\nenum RicoRecipientGuard",
+            range: start.upperBound..<source.endIndex
+        ))
+        let loop = String(source[start.lowerBound..<end.lowerBound])
+        #expect(loop.contains("RicoLaunchPolicySync.decide"))
+        #expect(loop.contains("reviewedAllowlistsMatchLiveNative"))
+        #expect(loop.contains("paintsVerifiedImmediately"))
+        #expect(loop.contains("forceFullProjection"))
+        #expect(loop.contains("skipNextProjection"))
+        #expect(!loop.contains("try await Task.sleep(nanoseconds: RicoProjectionRetryPolicy.launchDebounceNanoseconds)"))
+        #expect(source.contains("forceFullProjection: true"))
+        #expect(source.components(separatedBy: "forceFullProjection: true").count - 1 == 1)
+
+        let retryStart = try #require(source.range(of: "    func retryEnforcement()"))
+        let retryEnd = try #require(source.range(
+            of: "\n    /// Applies the Gateway's sanitized",
+            range: retryStart.upperBound..<source.endIndex
+        ))
+        let retry = String(source[retryStart.lowerBound..<retryEnd.lowerBound])
+        #expect(retry.contains("forceFullProjection: true"))
+
+        let applyStart = try #require(source.range(of: "    static func apply(\n"))
+        let holdingStart = try #require(source.range(
+            of: "\n    private static func applyHoldingLease",
+            range: applyStart.upperBound..<source.endIndex
+        ))
+        let applySource = String(source[applyStart.lowerBound..<holdingStart.lowerBound])
+        let cheapMatch = try #require(applySource.range(of: "reviewedAllowlistsMatchLiveNative"))
+        let preflight = try #require(applySource.range(of: "requireOperationalIMessageTransport"))
+        #expect(cheapMatch.lowerBound < preflight.lowerBound)
+        #expect(applySource.contains("activeAttempt == .healthyAudit"))
+    }
+
     @Test("Pause, health quarantine, and unavailable transport block outbound claims independently")
     func outboundAdmissionUsesOperationalTransport() {
-        #expect(!RicoOutboundAdmission.isVerified(
+        #expect(RicoOutboundAdmission.isVerified(
             explicitlyPaused: false,
             healthQuarantined: true,
             enforcementVerified: true,
@@ -595,6 +669,11 @@ struct RicoPolicyReconciliationTests {
         #expect(RicoOutboundAdmission.draftBlockReason(
             explicitlyPaused: false,
             healthQuarantined: false,
+            outboundTransportOperational: true
+        ) == nil)
+        #expect(RicoOutboundAdmission.draftBlockReason(
+            explicitlyPaused: false,
+            healthQuarantined: true,
             outboundTransportOperational: true
         ) == nil)
 
@@ -650,18 +729,18 @@ struct RicoPolicyReconciliationTests {
             explicitlyPaused: false,
             pauseIntentReviewed: true,
             healthQuarantined: false
-        ) == .quarantine)
+        ) == .noProjectionChange)
         #expect(RicoDeliveryObservationDecision.decide(
             hasWriterLease: true,
             readiness: .unavailable,
             explicitlyPaused: false,
             pauseIntentReviewed: true,
             healthQuarantined: false
-        ) == .quarantine)
+        ) == .noProjectionChange)
     }
 
     @MainActor
-    @Test("Degraded delivery and unavailable transport both invalidate staged activation")
+    @Test("Degraded delivery and unavailable transport do not invalidate staged activation")
     func failedProbeInvalidatesStagedActivation() throws {
         for readiness: IMessageProbeReadiness in [.deliveryDegraded, .unavailable] {
             let authority = RicoProjectionEpochAuthority()
@@ -673,17 +752,12 @@ struct RicoPolicyReconciliationTests {
                 pauseIntentReviewed: true,
                 healthQuarantined: true
             )
-            #expect(decision == .quarantine)
-            if decision == .quarantine {
-                authority.invalidate()
-            }
-            #expect(throws: RicoProjectionEpochAuthority.EpochError.self) {
-                try authority.attest(delayedActivation, currentMode: .active)
-            }
+            #expect(decision == .noProjectionChange)
+            try authority.attest(delayedActivation, currentMode: .active)
         }
     }
 
-    @Test("Emergency quarantine keeps the channel registered but removes every Rico admission path")
+    @Test("Health emergency operations keep the channel registered and leave allowlists intact")
     func emergencyNativeOperationsFailClosed() throws {
         let raw: [String: Any] = [
             "channels": ["imessage": ["enabled": true, "dmPolicy": "allowlist"]],
@@ -710,19 +784,13 @@ struct RicoPolicyReconciliationTests {
             operations.first { ($0["path"] as? String) == path }?["value"]
         }
         #expect(value("channels.imessage.enabled") as? Bool == true)
-        #expect(value("channels.imessage.dmPolicy") as? String == "disabled")
-        #expect((value("channels.imessage.allowFrom") as? [String])?.isEmpty == true)
-        #expect(value("channels.imessage.groupPolicy") as? String == "disabled")
-        #expect((value("channels.imessage.groupAllowFrom") as? [String])?.isEmpty == true)
-        #expect(value("commands.ownerAllowFrom") as? [String] == ["slack:U123"])
-        let agents = try #require(value("agents.list") as? [[String: Any]])
-        let shared = try #require(agents.first { ($0["id"] as? String) == "rico-shared" })
-        #expect((shared["model"] as? [String: Any])?["primary"] as? String == RicoNativePolicyProjection.requiredSharedLocalModel)
-        #expect((shared["model"] as? [String: Any])?["fallbacks"] as? [String] == [])
-        #expect((shared["tools"] as? [String: Any])?["deny"] as? [String] == ["*"])
-        let bindings = try #require(value("bindings") as? [[String: Any]])
-        #expect(!bindings.contains { ($0["agentId"] as? String) == "rico-shared" })
-        #expect(bindings.contains { ($0["agentId"] as? String) == "unrelated" })
+        #expect(value("channels.imessage.dmPolicy") == nil)
+        #expect(value("channels.imessage.allowFrom") == nil)
+        #expect(value("channels.imessage.groupPolicy") == nil)
+        #expect(value("channels.imessage.groupAllowFrom") == nil)
+        #expect(value("commands.ownerAllowFrom") == nil)
+        #expect(value("agents.list") == nil)
+        #expect(value("bindings") == nil)
 
         let explicit = RicoNativePolicyProjection.emergencyQuarantineOperations(
             rawConfig: raw,
@@ -747,7 +815,7 @@ struct RicoPolicyReconciliationTests {
             range: applyStart.upperBound..<source.endIndex
         ))
         let applySource = String(source[applyStart.lowerBound..<holdingStart.lowerBound])
-        let preflight = try #require(applySource.range(of: "try await requireOperationalIMessageTransport"))
+        let preflight = try #require(applySource.range(of: "requireOperationalIMessageTransport"))
         let lease = try #require(applySource.range(of: "RicoNativeConfigLease.acquire()"))
         #expect(preflight.lowerBound < lease.lowerBound)
         #expect(!source.contains("publishIMessageReadiness(.verifiedDelivery)"))
@@ -777,12 +845,12 @@ struct RicoPolicyReconciliationTests {
                 writeCount += 1
             }
         }
-        #expect(writeCount == 1)
+        #expect(writeCount == 0)
         #expect(((((raw["channels"] as? [String: Any])?["imessage"] as? [String: Any])?["enabled"]) as? Bool) == true)
         #expect(((raw["agents"] as? [String: Any])?["list"] as? [[String: Any]])?.contains {
             ($0["id"] as? String) == "rico-shared"
         } == true)
-        #expect((raw["bindings"] as? [[String: Any]])?.contains { ($0["agentId"] as? String) == "rico-shared" } == false)
+        #expect((raw["bindings"] as? [[String: Any]])?.contains { ($0["agentId"] as? String) == "rico-shared" } == true)
     }
 
     @Test("shared config lease is exclusive, private, cancellation-safe, and rejects link attacks")

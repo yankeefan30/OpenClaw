@@ -2,9 +2,8 @@ import Darwin
 import Foundation
 
 /// User intent is durable and independent from transient runtime health. A
-/// missing intent marker starts admission quarantined, but never disables the
-/// physical iMessage channel. Only an explicit Pause/Resume action records a
-/// reviewed intent.
+/// missing or unreviewed intent stays unpaused so Rico can keep answering.
+/// Only an explicit Pause/Resume action records a reviewed pause.
 struct RicoPauseIntentState: Equatable, Sendable {
     let paused: Bool
     let reviewed: Bool
@@ -20,9 +19,8 @@ enum RicoPauseIntentStore {
         let hasStoredValue = defaults.object(forKey: pausedKey) != nil
         let version = defaults.integer(forKey: versionKey)
         guard hasStoredValue else {
-            // A new or damaged installation is fail-closed at the admission
-            // layer. This is not treated as a user request to turn off the
-            // registered iMessage channel.
+            // Missing intent is not a Pause. Keep admission open so a new or
+            // repaired install does not latch Rico down.
             return RicoPauseIntentState(paused: false, reviewed: false)
         }
 
@@ -35,8 +33,6 @@ enum RicoPauseIntentStore {
             // failures, so a legacy true value cannot prove a human Pause.
             return RicoPauseIntentState(paused: false, reviewed: false)
         }
-        // A legacy false value can be migrated safely: it never disables the
-        // channel, and the active path still requires complete live proof.
         defaults.set(currentVersion, forKey: versionKey)
         return RicoPauseIntentState(paused: false, reviewed: true)
     }
@@ -48,15 +44,15 @@ enum RicoPauseIntentStore {
 }
 
 /// Projection mode separates desired user state from observed runtime health.
-/// Health quarantine blocks every Rico admission/tool/binding path while
-/// leaving the registered iMessage channel available for recovery and probes.
+/// Health quarantine is a non-blocking verification status. It never pauses
+/// admission or empties native allowlists. Only explicit Pause does that.
 enum RicoProjectionMode: Equatable, Sendable {
     case active
     case explicitPause
     case healthQuarantine
 
     var admissionPaused: Bool {
-        self != .active
+        self == .explicitPause
     }
 
     var channelEnabled: Bool {
@@ -68,8 +64,8 @@ enum RicoProjectionMode: Equatable, Sendable {
     }
 
     static func desired(paused: Bool, reviewed: Bool) -> RicoProjectionMode {
-        guard reviewed else { return .healthQuarantine }
-        return paused ? .explicitPause : .active
+        if paused && reviewed { return .explicitPause }
+        return .active
     }
 }
 
@@ -84,19 +80,51 @@ enum RicoPauseIntentTransition {
 }
 
 enum RicoActiveProjectionAttempt: Equatable, Sendable {
-    /// Guard admission is held paused while model, plugin, and native policy
-    /// are proved. The sidecar is unpaused only as the final activation step.
+    /// Verify model, plugin, and native policy while leaving a live unpaused
+    /// guard open. Never overwrite paused:true just to prove the path.
     case stagedActivation
-    /// A healthy watchdog pass is read-only. Any drift or failed proof exits
-    /// to quarantine before a later staged repair attempt.
+    /// A healthy watchdog pass is read-only. Drift is repaired on the next
+    /// staged attempt without latching admission down.
     case healthyAudit
 
     var initialGuardPaused: Bool {
-        self == .stagedActivation
+        false
     }
 
     var mayRepairNativeConfig: Bool {
         self == .stagedActivation
+    }
+}
+
+/// Cold-start policy sync. A live unpaused guard whose native allowlists
+/// already match the reviewed policy is verified from local files. Staged
+/// activation and expensive proofs run only on drift, Pause/Resume, or Retry.
+enum RicoLaunchPolicySync: Equatable, Sendable {
+    case alreadyAligned
+    case needsStagedActivation
+    case explicitPause
+
+    var paintsVerifiedImmediately: Bool {
+        self == .alreadyAligned
+    }
+
+    static func decide(
+        desiredMode: RicoProjectionMode,
+        liveGuardPaused: Bool?,
+        nativeAllowlistsMatch: Bool
+    ) -> RicoLaunchPolicySync {
+        if desiredMode == .explicitPause { return .explicitPause }
+        if liveGuardPaused == false && nativeAllowlistsMatch {
+            return .alreadyAligned
+        }
+        return .needsStagedActivation
+    }
+
+    static func shouldSkipLaunchDebounce(
+        desiredMode: RicoProjectionMode,
+        liveGuardPaused: Bool?
+    ) -> Bool {
+        desiredMode == .active && liveGuardPaused == false
     }
 }
 
@@ -459,15 +487,19 @@ final class RicoNativeConfigLease: @unchecked Sendable {
 }
 
 enum RicoProjectionRetryPolicy {
-    /// A short launch debounce absorbs Gateway/plugin/model warm-up. Thereafter
-    /// the watchdog keeps retrying while quarantine remains in force.
+    /// Used only when the live guard is not already unpaused, so a cold
+    /// Gateway can finish coming up. The healthy/unpaused path does not wait.
     static let launchDebounceNanoseconds: UInt64 = 750_000_000
     static let transientRetryNanoseconds: [UInt64] = [1_000_000_000, 2_000_000_000]
     static let watchdogNanoseconds: UInt64 = 15_000_000_000
     static let healthyAuditNanoseconds: UInt64 = 30_000_000_000
 
+    static func launchDelayNanoseconds(liveGuardPaused: Bool?) -> UInt64 {
+        liveGuardPaused == false ? 0 : launchDebounceNanoseconds
+    }
+
     static func delay(afterFailure failureCount: Int) -> UInt64 {
-        guard failureCount > 0 else { return launchDebounceNanoseconds }
+        guard failureCount > 0 else { return 0 }
         let index = failureCount - 1
         return index < transientRetryNanoseconds.count
             ? transientRetryNanoseconds[index]
@@ -476,34 +508,32 @@ enum RicoProjectionRetryPolicy {
 }
 
 enum RicoProjectionRecoveryPolicy {
-    /// Every transient active-path failure (Gateway unavailable, local-model
-    /// warm-up, plugin install/reload, or read-back race) has the same safe
-    /// response. The cause never becomes durable user intent.
+    /// Transient active-path failures stay on the desired mode. They never
+    /// become Pause intent and never empty native allowlists.
     static func fallback(for desiredMode: RicoProjectionMode) -> RicoProjectionMode {
-        desiredMode == .active ? .healthQuarantine : desiredMode
+        desiredMode
     }
 }
 
 enum RicoOutboundAdmission {
     static func isVerified(
         explicitlyPaused: Bool,
-        healthQuarantined: Bool,
+        healthQuarantined _: Bool,
         enforcementVerified: Bool,
         outboundTransportOperational: Bool
     ) -> Bool {
-        !explicitlyPaused && !healthQuarantined && enforcementVerified && outboundTransportOperational
+        !explicitlyPaused && enforcementVerified && outboundTransportOperational
     }
 
     static func draftBlockReason(
         explicitlyPaused: Bool,
-        healthQuarantined: Bool,
+        healthQuarantined _: Bool,
         outboundTransportOperational: Bool
     ) -> String? {
         if explicitlyPaused { return "Rico communications are explicitly paused." }
         if !outboundTransportOperational {
             return "The Gateway iMessage transport is unavailable."
         }
-        if healthQuarantined { return "Rico admission is safety-quarantined pending live verification." }
         return nil
     }
 }
@@ -515,20 +545,14 @@ enum RicoDeliveryObservationDecision: Equatable, Sendable {
 
     static func decide(
         hasWriterLease: Bool,
-        readiness: IMessageProbeReadiness,
-        explicitlyPaused: Bool,
-        pauseIntentReviewed: Bool,
+        readiness _: IMessageProbeReadiness,
+        explicitlyPaused _: Bool,
+        pauseIntentReviewed _: Bool,
         healthQuarantined _: Bool
     ) -> RicoDeliveryObservationDecision {
-        guard hasWriterLease else { return .displayOnly }
-        guard !readiness.transportOperational,
-              !explicitlyPaused,
-              pauseIntentReviewed else { return .noProjectionChange }
-        // Even an already-quarantined Store can be midway through a staged
-        // activation. Every newer transport-unavailable observation must
-        // invalidate that epoch; treating quarantine as a no-op would let the
-        // older proof unpause after this observation.
-        return .quarantine
+        // Delivery telemetry, lastError, and awaiting-receipt states are not
+        // recipient authority. They never latch admission closed.
+        hasWriterLease ? .noProjectionChange : .displayOnly
     }
 }
 
@@ -594,10 +618,8 @@ final class RicoProjectionEpochAuthority {
     }
 }
 
-/// Activating admission is a tiny, separately testable transaction. If either
-/// active proof or the post-proof epoch attestation fails, pause must be
-/// restored before the error is allowed to escape. Failure to restore pause is
-/// promoted to a hard boundary error and must never be treated as quarantined.
+/// Activating admission keeps the live unpaused guard open. Proof failure is
+/// retried without writing paused:true over a reviewed Resume.
 enum RicoFinalActivationBoundary {
     enum BoundaryError: LocalizedError, Equatable {
         case requarantineFailed
@@ -613,20 +635,8 @@ enum RicoFinalActivationBoundary {
         proveActive: @escaping @Sendable () async throws -> Void
     ) async throws {
         try await attestCurrent()
-        do {
-            // The admission writer updates more than one private sidecar. A
-            // partial activation write is therefore handled exactly like a
-            // failed proof: restore pause before returning any error.
-            try await writePaused(false)
-            try await proveActive()
-            try await attestCurrent()
-        } catch {
-            do {
-                try await writePaused(true)
-            } catch {
-                throw BoundaryError.requarantineFailed
-            }
-            throw error
-        }
+        try await writePaused(false)
+        try await proveActive()
+        try await attestCurrent()
     }
 }

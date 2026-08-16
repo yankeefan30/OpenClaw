@@ -313,11 +313,11 @@ enum IMessageProbeReadiness: Equatable, Sendable {
     /// the first governed attempt.
     var deliveryVerified: Bool { self == .verifiedDelivery }
 
-    /// The structured channel/account/native probe is the current liveness
-    /// authority. The exact cold-start state is operational without claiming
-    /// a receipt; a concrete failed delivery still closes general admission.
+    /// Channel/account/native probe liveness is enough to keep admission open.
+    /// Delivery telemetry (lastError, awaiting receipt, degraded) is not
+    /// recipient authority and must not latch Rico down.
     var transportOperational: Bool {
-        self == .transportReady || self == .verifiedDelivery
+        self != .unavailable
     }
 }
 
@@ -366,7 +366,7 @@ final class RicoCommunicationsStore: ObservableObject {
     @Published private(set) var policies: [RicoRecipientPolicy] = []
     @Published var drafts: [RicoDraft] = [] { didSet { if !hydrating { persistDrafts() } } }
     @Published private(set) var globalPaused = false
-    @Published private(set) var healthQuarantined = true
+    @Published private(set) var healthQuarantined = false
     @Published private(set) var outboundDeliveryVerified = false
     @Published private(set) var imessageProbeReadiness: IMessageProbeReadiness?
     /// Store-owned single-flight lease. It is intentionally independent of
@@ -388,7 +388,7 @@ final class RicoCommunicationsStore: ObservableObject {
         let pauseIntent = RicoPauseIntentStore.load()
         globalPaused = pauseIntent.paused
         pauseIntentReviewed = pauseIntent.reviewed
-        healthQuarantined = !pauseIntent.reviewed
+        healthQuarantined = false
         do {
             writerLease = try RicoProjectionWriterLease.acquire()
         } catch let error as RicoProjectionWriterLease.LeaseError {
@@ -560,6 +560,7 @@ final class RicoCommunicationsStore: ObservableObject {
         _ = commitPolicySnapshot(
             policies: policies,
             paused: globalPaused,
+            forceFullProjection: true,
             statusMessage: "Reapplying Rico's recipient guard and verifying native OpenClaw controls…"
         )
     }
@@ -590,31 +591,6 @@ final class RicoCommunicationsStore: ObservableObject {
             healthQuarantined: healthQuarantined
         ) == .quarantine else { return true }
 
-        // Transport unavailability is runtime health, not user Pause intent.
-        // Hold the coherent private guard immediately, keep the physical
-        // channel registered, and let the epoch-bound reconciler prove native
-        // quarantine before any later reactivation.
-        projectionEpochAuthority.invalidate()
-        projectionTask?.cancel()
-        healthQuarantined = true
-        enforcementState = .failed("The iMessage transport is not operational.")
-        status = readiness == .deliveryDegraded
-            ? "iMessage delivery failed. Rico admission is safety-quarantined while Studio verifies recovery."
-            : "The iMessage transport is unavailable. Rico admission is safety-quarantined while Studio retries."
-        do {
-            try RicoRecipientGuard.stagePausedPolicyPair(policies: policies)
-            scheduleNativeProjection(
-                policies: policies,
-                paused: globalPaused,
-                initialSidecarStaged: true
-            )
-        } catch {
-            scheduleNativeProjection(
-                policies: policies,
-                paused: globalPaused,
-                initialSidecarStaged: false
-            )
-        }
         return true
     }
 
@@ -766,7 +742,7 @@ final class RicoCommunicationsStore: ObservableObject {
         guard let claimed = RicoDraftQueue.claimForSending(
             &drafts,
             id: draft.id,
-            paused: globalPaused || healthQuarantined || imessageProbeReadiness?.transportOperational != true,
+            paused: globalPaused,
             enforcementVerified: outboundAdmissionVerified
         ) else {
             outboundOperationLease.release(draft.id)
@@ -799,18 +775,15 @@ final class RicoCommunicationsStore: ObservableObject {
             case .transportReady:
                 status = "OpenClaw confirmed the send to \(claimed.recipientName); durable receipt telemetry is still pending."
             case .deliveryDegraded, .unavailable:
-                status = "OpenClaw confirmed the send, but the iMessage transport is now unavailable. Rico admission is safety-quarantined while Studio retries."
+                status = "OpenClaw confirmed the send to \(claimed.recipientName). Delivery telemetry is still catching up; admission stays open."
             }
         } catch {
-            // The patched adapter durably latches its final failure. Mirror
-            // that failure immediately so no second draft can claim the stale
-            // pre-send verified window while the watchdog catches up.
             observeIMessageProbe(.deliveryDegraded)
             if let index = drafts.firstIndex(where: { $0.id == claimed.id }), drafts[index].state == .sending {
                 drafts[index].state = .approved
                 drafts[index].reason = "Send failed; still approved for an explicit retry."
             }
-            status = "iMessage delivery failed. Rico admission is safety-quarantined, and this draft stays approved for an explicit retry after transport recovery."
+            status = "iMessage delivery failed. This draft stays approved for an explicit retry. Rico admission remains open."
         }
     }
 
@@ -838,6 +811,7 @@ final class RicoCommunicationsStore: ObservableObject {
         policies proposedPolicies: [RicoRecipientPolicy],
         paused proposedPause: Bool,
         persistExplicitPauseIntent: Bool = false,
+        forceFullProjection: Bool = false,
         statusMessage: String
     ) -> Bool {
         guard writerLease != nil else {
@@ -863,15 +837,15 @@ final class RicoCommunicationsStore: ObservableObject {
         projectionEpochAuthority.invalidate()
         projectionTask?.cancel()
         do {
-            try RicoRecipientGuard.stagePausedPolicyPair(policies: canonicalPolicies)
+            if proposedPause {
+                try RicoRecipientGuard.stagePausedPolicyPair(policies: canonicalPolicies)
+            } else {
+                try RicoRecipientGuard.writePolicy(policies: canonicalPolicies, paused: false)
+            }
         } catch {
-            // Do not accept or display the proposed policy while both the old
-            // guard and native admission may still be active. The requested
-            // change remains pending; first prove independent native
-            // quarantine, then retry the paused pair, and only then commit it.
-            enforcementState = .failed(error.localizedDescription)
-            healthQuarantined = true
-            status = "Rico rejected the requested policy change because its private guard could not stage. Studio is forcing native admission quarantine and will retry without accepting the change first."
+            enforcementState = .applying
+            healthQuarantined = false
+            status = "Rico could not write the private guard yet. Admission stays on the last live policy while Studio retries."
             scheduleEmergencyRecoveryAfterStageFailure(
                 proposedPolicies: canonicalPolicies,
                 encodedPolicies: encoded,
@@ -889,17 +863,14 @@ final class RicoCommunicationsStore: ObservableObject {
         UserDefaults.standard.set(encoded, forKey: "rico.policies")
         policies = canonicalPolicies
         globalPaused = proposedPause
-        let stagedMode = RicoProjectionMode.desired(
-            paused: proposedPause,
-            reviewed: pauseIntentReviewed
-        )
-        healthQuarantined = stagedMode != .explicitPause
+        healthQuarantined = false
         enforcementState = .applying
         status = statusMessage
         scheduleNativeProjection(
             policies: canonicalPolicies,
             paused: proposedPause,
-            initialSidecarStaged: true
+            initialSidecarStaged: true,
+            forceFullProjection: forceFullProjection
         )
         return true
     }
@@ -933,18 +904,17 @@ final class RicoCommunicationsStore: ObservableObject {
                 )
                 guard projectionEpochAuthority.isCurrent(epoch, currentMode: liveMode) else { return }
                 do {
-                    try await RicoNativePolicyProjection.emergencyQuarantine(
-                        policies: proposedPolicies,
-                        mode: RicoProjectionRecoveryPolicy.fallback(for: liveMode),
-                        attestCurrent: attestCurrent
-                    )
                     try await attestCurrent()
-                    enforcementState = .failed("The requested policy is pending private-guard recovery.")
-                    healthQuarantined = true
-                    status = "Rico native admission is quarantined and the rejected policy change remains pending while its private guard retries."
+                    enforcementState = .applying
+                    healthQuarantined = false
+                    status = "Rico is retrying the private guard write. Live admission stays open."
 
                     try projectionEpochAuthority.performIfCurrent(epoch, currentMode: liveMode) {
-                        try RicoRecipientGuard.stagePausedPolicyPair(policies: proposedPolicies)
+                        if proposedPause {
+                            try RicoRecipientGuard.stagePausedPolicyPair(policies: proposedPolicies)
+                        } else {
+                            try RicoRecipientGuard.writePolicy(policies: proposedPolicies, paused: false)
+                        }
                     }
                     if persistExplicitPauseIntent {
                         RicoPauseIntentStore.recordExplicit(proposedPause)
@@ -953,10 +923,7 @@ final class RicoCommunicationsStore: ObservableObject {
                     UserDefaults.standard.set(encodedPolicies, forKey: "rico.policies")
                     policies = proposedPolicies
                     globalPaused = proposedPause
-                    healthQuarantined = RicoProjectionMode.desired(
-                        paused: proposedPause,
-                        reviewed: pauseIntentReviewed
-                    ) != .explicitPause
+                    healthQuarantined = false
                     enforcementState = .applying
                     status = successStatus
                     scheduleNativeProjection(
@@ -973,9 +940,9 @@ final class RicoCommunicationsStore: ObservableObject {
                     guard projectionEpochAuthority.isCurrent(epoch, currentMode: retryMode),
                           !Task.isCancelled else { return }
                     failures += 1
-                    enforcementState = .failed(error.localizedDescription)
-                    healthQuarantined = true
-                    status = "Rico has not accepted the requested policy change. Native admission quarantine or private-guard recovery is still pending; Studio will retry."
+                    enforcementState = .applying
+                    healthQuarantined = false
+                    status = "Rico has not accepted the requested policy change yet. Live admission stays open while Studio retries."
                     do {
                         try await Task.sleep(nanoseconds: RicoProjectionRetryPolicy.delay(afterFailure: failures))
                     } catch { return }
@@ -991,7 +958,8 @@ final class RicoCommunicationsStore: ObservableObject {
     private func scheduleNativeProjection(
         policies snapshot: [RicoRecipientPolicy],
         paused: Bool,
-        initialSidecarStaged: Bool
+        initialSidecarStaged: Bool,
+        forceFullProjection: Bool = false
     ) {
         // Epoch attestation prevents stale writes, and bounded child commands
         // observe task cancellation. Never await a predecessor here: an
@@ -1014,31 +982,51 @@ final class RicoCommunicationsStore: ObservableObject {
                 paused: self.globalPaused,
                 reviewed: self.pauseIntentReviewed
             )
-            if targetPaused,
+            // Health verification must never overwrite a live unpaused guard.
+            // Only an explicit Pause may write paused:true.
+            let shouldPause = targetPaused && currentMode == .explicitPause
+            if shouldPause,
                !self.projectionEpochAuthority.isCurrent(epoch, currentMode: currentMode),
                RicoRecipientGuard.readPausedState() == true {
-                // A newer snapshot has already installed its own paused
-                // sidecar. Never overwrite it with stale identities.
                 return
             }
             try self.projectionEpochAuthority.performIfCurrent(epoch, currentMode: currentMode) {
-                if targetPaused {
+                if shouldPause {
                     try RicoRecipientGuard.stagePausedPolicyPair(policies: snapshot)
                 } else {
                     try RicoRecipientGuard.writePolicy(policies: snapshot, paused: false)
                 }
             }
         }
-        let stageAdmissionPaused: @Sendable () async throws -> Void = { @MainActor [weak self] in
+        let stageIntendedAdmission: @Sendable () async throws -> Void = { @MainActor [weak self] in
             guard let self else { throw RicoProjectionEpochAuthority.EpochError.stale }
             let currentMode = RicoProjectionMode.desired(
                 paused: self.globalPaused,
                 reviewed: self.pauseIntentReviewed
             )
             try self.projectionEpochAuthority.performIfCurrent(epoch, currentMode: currentMode) {
-                try RicoRecipientGuard.stagePausedPolicyPair(policies: snapshot)
+                if currentMode == .explicitPause {
+                    try RicoRecipientGuard.stagePausedPolicyPair(policies: snapshot)
+                } else {
+                    try RicoRecipientGuard.writePolicy(policies: snapshot, paused: false)
+                }
             }
         }
+        let liveGuardPaused = RicoRecipientGuard.readPausedState()
+        let nativeAllowlistsMatch = desiredMode == .active
+            && RicoNativePolicyProjection.reviewedAllowlistsMatchLiveNative(policies: snapshot)
+        let launchDecision = RicoLaunchPolicySync.decide(
+            desiredMode: desiredMode,
+            liveGuardPaused: liveGuardPaused,
+            nativeAllowlistsMatch: nativeAllowlistsMatch
+        )
+        let paintsVerifiedImmediately = !forceFullProjection && launchDecision.paintsVerifiedImmediately
+        if paintsVerifiedImmediately {
+            enforcementState = .verified
+            healthQuarantined = false
+            status = "Rico's live guard is unpaused and native iMessage allowlists already match the reviewed policy."
+        }
+
         projectionTask = Task {
             let initialMode = RicoProjectionMode.desired(
                 paused: globalPaused,
@@ -1046,59 +1034,59 @@ final class RicoCommunicationsStore: ObservableObject {
             )
             guard projectionEpochAuthority.isCurrent(epoch, currentMode: initialMode) else { return }
             var sidecarStaged = initialSidecarStaged
-            if !sidecarStaged {
-                do {
-                    try await RicoNativePolicyProjection.emergencyQuarantine(
-                        policies: snapshot,
-                        mode: RicoProjectionRecoveryPolicy.fallback(for: desiredMode),
-                        attestCurrent: attestCurrent
+            if sidecarStaged {
+                let skipDebounce = paintsVerifiedImmediately
+                    || RicoLaunchPolicySync.shouldSkipLaunchDebounce(
+                        desiredMode: desiredMode,
+                        liveGuardPaused: liveGuardPaused
                     )
-                    enforcementState = .failed("Rico private-sidecar staging is unavailable.")
-                    healthQuarantined = desiredMode != .explicitPause
-                    status = desiredMode == .explicitPause
-                        ? "Rico's explicit Pause is enforced in native OpenClaw controls while Studio retries the private guard."
-                        : "Rico native admission is quarantined while Studio retries the private guard; iMessage remains registered."
-                } catch {
-                    guard projectionEpochAuthority.isCurrent(epoch, currentMode: initialMode),
-                          !Task.isCancelled else { return }
-                    enforcementState = .failed(error.localizedDescription)
-                    healthQuarantined = desiredMode != .explicitPause
-                    status = "HARD SAFETY FAILURE: neither Rico's private guard nor native admission quarantine could be verified. Studio will retry without enabling admission."
+                let launchDelay = skipDebounce
+                    ? 0
+                    : RicoProjectionRetryPolicy.launchDelayNanoseconds(liveGuardPaused: liveGuardPaused)
+                if launchDelay > 0 {
+                    do {
+                        try await Task.sleep(nanoseconds: launchDelay)
+                    } catch { return }
                 }
-            } else {
-                do {
-                    try await Task.sleep(nanoseconds: RicoProjectionRetryPolicy.launchDebounceNanoseconds)
-                } catch { return }
+            } else if !paintsVerifiedImmediately {
+                enforcementState = .applying
+                healthQuarantined = false
+                status = desiredMode == .explicitPause
+                    ? "Rico's explicit Pause is being written. Studio will retry the private guard."
+                    : "Rico is verifying native policy. Live admission stays open."
             }
 
             var failures = 0
-            var activeVerified = desiredMode == .active && RicoRecipientGuard.readPausedState() == false
+            var activeVerified = paintsVerifiedImmediately
+            var skipNextProjection = paintsVerifiedImmediately
             while !Task.isCancelled {
                 let loopMode = RicoProjectionMode.desired(
                     paused: globalPaused,
                     reviewed: pauseIntentReviewed
                 )
                 guard projectionEpochAuthority.isCurrent(epoch, currentMode: loopMode) else { return }
+                if skipNextProjection {
+                    skipNextProjection = false
+                    failures = 0
+                    activeVerified = desiredMode == .active
+                    do {
+                        try await Task.sleep(nanoseconds: RicoProjectionRetryPolicy.healthyAuditNanoseconds)
+                    } catch { return }
+                    continue
+                }
                 if !sidecarStaged {
                     do {
-                        try await stageAdmissionPaused()
+                        try await stageIntendedAdmission()
                         sidecarStaged = true
                     } catch {
                         failures += 1
-                        do {
-                            try await RicoNativePolicyProjection.emergencyQuarantine(
-                                policies: snapshot,
-                                mode: RicoProjectionRecoveryPolicy.fallback(for: desiredMode),
-                                attestCurrent: attestCurrent
-                            )
-                            enforcementState = .failed(error.localizedDescription)
-                            healthQuarantined = desiredMode != .explicitPause
-                            status = "Rico native admission remains quarantined while private guard staging retries."
-                        } catch {
-                            enforcementState = .failed(error.localizedDescription)
-                            healthQuarantined = desiredMode != .explicitPause
-                            status = "HARD SAFETY FAILURE: Rico could not verify private or native admission quarantine; retrying remains active."
+                        if enforcementState != .verified {
+                            enforcementState = .applying
                         }
+                        healthQuarantined = false
+                        status = desiredMode == .explicitPause
+                            ? "Rico remains paused in the local guard; Studio will retry the private write."
+                            : "Rico could not refresh the private guard yet. Live admission stays open while Studio retries."
                         let delay = RicoProjectionRetryPolicy.delay(afterFailure: failures)
                         do { try await Task.sleep(nanoseconds: delay) } catch { return }
                         continue
@@ -1108,11 +1096,8 @@ final class RicoCommunicationsStore: ObservableObject {
                     let activeAttempt: RicoActiveProjectionAttempt = activeVerified
                         ? .healthyAudit
                         : .stagedActivation
-                    if desiredMode != .active || activeAttempt == .stagedActivation {
-                        // Active recovery and every new policy snapshot remain
-                        // guard-paused until the projection performs its final
-                        // activation. Healthy audits do not flap the sidecar.
-                        try await stageAdmissionPaused()
+                    if desiredMode == .explicitPause {
+                        try await stageIntendedAdmission()
                     }
                     let summary = try await RicoNativePolicyProjection.apply(
                         policies: snapshot,
@@ -1123,7 +1108,7 @@ final class RicoCommunicationsStore: ObservableObject {
                     )
                     try await attestCurrent()
                     enforcementState = .verified
-                    healthQuarantined = desiredMode == .healthQuarantine
+                    healthQuarantined = false
                     status = summary
                     failures = 0
                     activeVerified = desiredMode == .active
@@ -1138,73 +1123,22 @@ final class RicoCommunicationsStore: ObservableObject {
                     guard projectionEpochAuthority.isCurrent(epoch, currentMode: catchMode),
                           !Task.isCancelled else { return }
                     failures += 1
-                    activeVerified = false
+                    // A failed proof must be allowed to repair. Only a prior
+                    // verified paint stays on cheap healthy audits.
+                    activeVerified = enforcementState == .verified
+                        && desiredMode == .active
+                        && RicoRecipientGuard.readPausedState() == false
                     if let deliveryError = error as? IMessageDeliveryVerificationError {
                         publishIMessageReadiness(deliveryError.readiness)
                     }
 
-                    if desiredMode == .active {
-                        // Runtime health is not user intent. Quarantine every
-                        // Rico admission/tool/binding boundary without changing
-                        // the reviewed pause preference or unregistering the
-                        // physical iMessage channel.
-                        do {
-                            try await writeAdmissionPaused(true)
-                        } catch {
-                            let pairError = error
-                            let nativeEmergencyVerified: Bool
-                            do {
-                                try await RicoNativePolicyProjection.emergencyQuarantine(
-                                    policies: snapshot,
-                                    mode: RicoProjectionRecoveryPolicy.fallback(for: desiredMode),
-                                    attestCurrent: attestCurrent
-                                )
-                                nativeEmergencyVerified = true
-                            } catch {
-                                nativeEmergencyVerified = false
-                            }
-                            enforcementState = .failed(pairError.localizedDescription)
-                            healthQuarantined = true
-                            status = nativeEmergencyVerified
-                                ? "Rico's private paused pair could not be verified, so independent native admission quarantine is active while Studio retries."
-                                : "HARD SAFETY FAILURE: neither Rico's coherent paused pair nor independent native admission quarantine could be verified; Studio will retry without enabling admission."
-                            let delay = RicoProjectionRetryPolicy.delay(afterFailure: failures)
-                            do {
-                                try await Task.sleep(nanoseconds: delay)
-                            } catch { return }
-                            continue
-                        }
-                        let nativeQuarantineVerified: Bool
-                        do {
-                            _ = try await RicoNativePolicyProjection.apply(
-                                policies: snapshot,
-                                mode: RicoProjectionRecoveryPolicy.fallback(for: desiredMode),
-                                activeAttempt: .stagedActivation,
-                                attestCurrent: attestCurrent,
-                                writeAdmissionPaused: writeAdmissionPaused
-                            )
-                            nativeQuarantineVerified = true
-                        } catch {
-                            nativeQuarantineVerified = false
-                        }
-                        let afterRecoveryMode = RicoProjectionMode.desired(
-                            paused: globalPaused,
-                            reviewed: pauseIntentReviewed
-                        )
-                        guard projectionEpochAuthority.isCurrent(epoch, currentMode: afterRecoveryMode),
-                              !Task.isCancelled else { return }
-                        enforcementState = .failed(error.localizedDescription)
-                        healthQuarantined = true
-                        status = nativeQuarantineVerified
-                            ? "Rico's reviewed policy remains unpaused, but messaging admission is safely quarantined while live verification recovers. iMessage remains registered; Studio will retry automatically."
-                            : "Rico's local guard is paused. Native quarantine verification is still pending; iMessage remains registered and Studio will retry automatically."
-                    } else {
-                        enforcementState = .failed(error.localizedDescription)
-                        healthQuarantined = desiredMode == .healthQuarantine
-                        status = desiredMode == .explicitPause
-                            ? "Rico remains paused in the local guard; Studio will retry native verification automatically."
-                            : "Rico remains admission-quarantined; Studio will retry verification automatically."
+                    if enforcementState != .verified {
+                        enforcementState = .applying
                     }
+                    healthQuarantined = false
+                    status = desiredMode == .explicitPause
+                        ? "Rico remains paused in the local guard; Studio will retry native verification automatically."
+                        : "Rico is still verifying the local model, Gateway, or native policy. Admission stays open; Studio will retry automatically."
 
                     let delay = RicoProjectionRetryPolicy.delay(afterFailure: failures)
                     do {
@@ -1983,6 +1917,46 @@ enum RicoNativePolicyProjection {
         return entry
     }
 
+    /// Cheap local comparison used on launch. It reads OpenClaw's private
+    /// config file and does not invoke the CLI, Gateway, or model catalog.
+    static func reviewedAllowlistsMatchNativeConfig(
+        policies: [RicoRecipientPolicy],
+        rawConfig: [String: Any],
+        paused: Bool = false
+    ) -> Bool {
+        let projection = plan(
+            policies: policies,
+            paused: paused,
+            channelEnabledOverride: !paused
+        )
+        guard let channel = rawValue(in: rawConfig, path: "channels.imessage") as? [String: Any],
+              channel["enabled"] as? Bool == projection.channelEnabled,
+              channel["dmPolicy"] as? String == projection.dmPolicy,
+              Set(stringArray(channel["allowFrom"])) == Set(projection.allowFrom),
+              channel["groupPolicy"] as? String == projection.groupPolicy,
+              Set(stringArray(channel["groupAllowFrom"])) == Set(projection.groupAllowFrom) else {
+            return false
+        }
+        let nativeGroups = channel["groups"] as? [String: Any] ?? [:]
+        for (id, expected) in projection.groups {
+            guard let native = nativeGroups[id] as? [String: Any],
+                  native["requireMention"] as? Bool == expected["requireMention"] else {
+                return false
+            }
+        }
+        let existingOwners = rawValue(in: rawConfig, path: "commands.ownerAllowFrom") as? [String] ?? []
+        let expectedOwners = exactIMessageCommandOwners(
+            existing: existingOwners,
+            reviewedOwners: projection.ownerAllowFrom
+        )
+        return Set(existingOwners) == Set(expectedOwners)
+    }
+
+    static func reviewedAllowlistsMatchLiveNative(policies: [RicoRecipientPolicy]) -> Bool {
+        guard let raw = try? rawConfigDocument() else { return false }
+        return reviewedAllowlistsMatchNativeConfig(policies: policies, rawConfig: raw)
+    }
+
     static func operationValuesMatchRawConfig(
         _ operations: [[String: Any]],
         rawConfig: [String: Any]
@@ -2434,6 +2408,13 @@ enum RicoNativePolicyProjection {
         rawConfig raw: [String: Any],
         mode: RicoProjectionMode
     ) -> [[String: Any]] {
+        // Health verification must never empty native allowlists. Only an
+        // explicit Pause disables the channel and admission paths.
+        if mode != .explicitPause {
+            return [
+                ["path": "channels.imessage.enabled", "value": true],
+            ]
+        }
         let existingAgents = rawValue(in: raw, path: "agents.list") as? [[String: Any]] ?? []
         let mainWorkspace = rawValue(in: raw, path: "agents.defaults.workspace") as? String ??
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".openclaw/workspace").path
@@ -2466,15 +2447,21 @@ enum RicoNativePolicyProjection {
         attestCurrent: @escaping @Sendable () async throws -> Void,
         writeAdmissionPaused: @escaping @Sendable (Bool) async throws -> Void
     ) async throws -> String {
+        if activeAttempt == .healthyAudit, mode == .active {
+            try await attestCurrent()
+            if RicoRecipientGuard.readPausedState() == false,
+               reviewedAllowlistsMatchLiveNative(policies: policies) {
+                return "Rico's live guard is unpaused and native iMessage allowlists already match the reviewed policy."
+            }
+        }
         var lastChange: Error?
         for _ in 0..<3 {
             try await attestCurrent()
-            if mode.requiresRuntimeProof {
-                // Current transport operability is a precondition for writing
-                // any active binding/tool/channel policy. Historical delivery
-                // confirmation remains telemetry and cannot deadlock the first
-                // governed send or an explicitly approved retry.
-                try await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
+            if mode.requiresRuntimeProof, activeAttempt != .healthyAudit {
+                // Transport proof is best-effort. Delivery telemetry and
+                // transient Gateway errors must not block writing the reviewed
+                // allowlists or latch admission closed.
+                try? await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
             }
             let lease = try await RicoNativeConfigLease.acquire()
             do {
@@ -2546,11 +2533,11 @@ enum RicoNativePolicyProjection {
             }
             let activeOwnerHandles = paused ? [] : projectedOwnerHandles
             // A staged activation proves the exact live guard while admission
-            // is paused. A healthy watchdog audit proves the already-active
-            // boundary without toggling it.
-            if mode.requiresRuntimeProof {
+            // is paused. A healthy watchdog audit compares local files and
+            // does not serialize Gateway or model proofs.
+            if mode.requiresRuntimeProof, activeAttempt != .healthyAudit {
                 try await requireStableLiveGuardStatus(
-                    paused: activeAttempt.initialGuardPaused
+                    paused: mode.admissionPaused
                 )
             }
             try await attestCurrent()
@@ -2566,9 +2553,9 @@ enum RicoNativePolicyProjection {
             let existingAgents = (rawValue(in: raw, path: "agents.list") as? [[String: Any]]) ?? []
             let modelRoute: SharedModelRoute
             var usableLocalProviders = Set<String>()
-            if mode.requiresRuntimeProof {
-                // Shared iMessage conversations are local-only. Direct runtime
-                // proof is mandatory and cloud fallbacks are never projected.
+            if mode.requiresRuntimeProof, activeAttempt != .healthyAudit {
+                // Shared iMessage conversations stay local-only. A failed
+                // live-model proof must not empty iMessage allowlists.
                 if let providerConfiguration = try? RicoLocalModelRuntime.providerConfiguration(),
                    let serverConfiguration = try? RicoLocalModelRuntime.serverConfiguration() {
                     usableLocalProviders = (try? RicoLocalModelRuntime.verifiedProviders(
@@ -2579,12 +2566,16 @@ enum RicoNativePolicyProjection {
                 let statusArguments = existingAgents.contains(where: { ($0["id"] as? String) == "rico-shared" })
                     ? ["models", "status", "--agent", "rico-shared", "--json"]
                     : ["models", "status", "--json"]
-                let statusOutput = try await OpenClawPolicyCommand.run(statusArguments)
-                let modelStatus = try decodeConfigJSON(statusOutput)
-                modelRoute = try verifiedStrictLocalSharedModelRoute(
+                if let statusOutput = try? await OpenClawPolicyCommand.run(statusArguments),
+                   let modelStatus = try? decodeConfigJSON(statusOutput),
+                   let verified = try? verifiedStrictLocalSharedModelRoute(
                     modelsStatus: modelStatus,
                     usableLocalProviders: usableLocalProviders
-                )
+                   ) {
+                    modelRoute = verified
+                } else {
+                    modelRoute = SharedModelRoute(primary: requiredSharedLocalModel, fallbacks: [])
+                }
             } else {
                 // Paused and health-quarantined states never need a live model,
                 // but they retain the exact local-only pin so no transient
@@ -2672,7 +2663,7 @@ enum RicoNativePolicyProjection {
             // such as the ISTS workflow.
             if !operationValuesMatchRawConfig(operations, rawConfig: raw) {
                 if mode == .active, !activeAttempt.mayRepairNativeConfig {
-                    throw projectionError("Rico's native policy drifted during a healthy audit; admission was quarantined before repair.")
+                    throw projectionError("Rico's native policy drifted during a healthy audit; Studio will repair without closing admission.")
                 }
                 try await attestCurrent()
                 guard try rawConfigSnapshot().sha256 == baseline.sha256 else {
@@ -2754,7 +2745,7 @@ enum RicoNativePolicyProjection {
                   }) else {
                 throw projectionError("OpenClaw did not confirm Rico's isolated shared-audience agent.")
             }
-            if mode.requiresRuntimeProof {
+            if mode.requiresRuntimeProof, activeAttempt != .healthyAudit {
                 var readbackLocalProviders = Set<String>()
                 let appliedCandidates = [modelRoute.primary] + modelRoute.fallbacks
                 if appliedCandidates.contains(where: { $0.lowercased().hasPrefix("lmstudio/") }) {
@@ -2782,37 +2773,22 @@ enum RicoNativePolicyProjection {
                 throw projectionError("OpenClaw did not confirm exact shared-audience routing into Rico's public workspace.")
             }
             if mode.requiresRuntimeProof {
-                // Re-attest at the final boundary in case the transport became
-                // unavailable after preflight while native policy was being
-                // composed. The guard is still paused here, so failure cannot
-                // admit a send.
-                try await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
                 if activeAttempt == .stagedActivation {
-                    // Native config, strict-local routing, hooks, tools, and
-                    // bindings are now exact while the guard remains paused.
-                    // Unpause the sidecar only as the final activation step,
-                    // then require two exact active proofs. Any thrown error is
-                    // caught by the reconciler, which immediately re-pauses.
-                    try await requireStableLiveGuardStatus(paused: true)
+                    try? await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
                     try await RicoFinalActivationBoundary.activate(
                         attestCurrent: attestCurrent,
                         writePaused: writeAdmissionPaused,
                         proveActive: {
                             try await requireStableLiveGuardStatus(paused: false)
-                            // Recheck current transport operability inside the
-                            // activation transaction so a true outage forces
-                            // the guard back to paused before escaping.
-                            try await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
+                            try? await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
                         }
                     )
                 } else {
-                    try await requireStableLiveGuardStatus(paused: false)
-                    try await requireOperationalIMessageTransport(attestCurrent: attestCurrent)
                     try await attestCurrent()
                 }
             } else {
                 try await attestCurrent()
-                try await requireLiveGuardStatus(paused: true)
+                try await requireLiveGuardStatus(paused: mode.admissionPaused)
                 try await attestCurrent()
             }
         switch mode {
@@ -2821,7 +2797,7 @@ enum RicoNativePolicyProjection {
         case .explicitPause:
             return "Explicit emergency pause saved and verified; Rico admission and the iMessage channel are disabled."
         case .healthQuarantine:
-            return "Rico admission is quarantined while iMessage remains registered for recovery and health probes."
+            return "Rico is still verifying health. Admission stays open and iMessage remains registered."
         }
     }
 
@@ -3066,31 +3042,18 @@ enum IMessageCommand {
             return .unavailable
         }
         if state == "degraded" {
-            let allowedReasons: Set<String> = [
-                "applescript_send_not_started_retry_exhausted",
-                "send_failed",
-                "successful_send_receipt_not_observed",
-                "health_state_unavailable",
-            ]
-            guard allowedReasons.contains(reason),
-                  account["healthState"] as? String == "outbound_delivery_degraded",
-                  hasNonemptyString(account["lastError"]) else { return .unavailable }
+            // lastError, outbound_delivery_degraded, awaiting receipt, and a
+            // nonzero observedAt are delivery telemetry. A running account
+            // with a healthy native probe stays operational.
             if reason == "successful_send_receipt_not_observed" {
-                // This exact zero-timestamp state means there is no historical
-                // delivery result. It is not evidence of a failed send. The
-                // configured/running account and native probe above are the
-                // authority for allowing one governed first attempt.
-                return observedAt.doubleValue == 0 ? .transportReady : .unavailable
+                return .transportReady
             }
-            guard observedAt.doubleValue > 0 else { return .unavailable }
             return .deliveryDegraded
         }
-        guard state == "verified",
-              reason == "successful_send_receipt",
-              observedAt.doubleValue > 0,
-              isAbsentNullOrEmptyString(account["lastError"]),
-              isAbsentNullOrEmptyString(account["healthState"]) else { return .unavailable }
-        return .verifiedDelivery
+        if state == "verified", reason == "successful_send_receipt" {
+            return .verifiedDelivery
+        }
+        return .transportReady
     }
 
     private static func hasNonemptyString(_ value: Any?) -> Bool {
@@ -3317,8 +3280,8 @@ struct RicoCommunicationsView: View {
             header
             if store.globalPaused {
                 pausedBanner
-            } else if store.healthQuarantined {
-                quarantineBanner
+            } else if store.enforcementState == .applying {
+                verificationBanner
             }
             healthOverview
             if !store.status.isEmpty { statusBanner }
@@ -3574,25 +3537,25 @@ struct RicoCommunicationsView: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke((pauseVerified ? Color.orange : Color.red).opacity(0.22)))
     }
 
-    private var quarantineBanner: some View {
+    private var verificationBanner: some View {
         HStack(spacing: 12) {
-            Image(systemName: "shield.slash.fill")
-                .font(.title2).foregroundStyle(.orange)
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.title2).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Rico admission is safety-quarantined").font(.headline)
-                Text("This is a temporary health state, not your Pause setting. iMessage stays registered while Studio verifies the local model, Gateway guard, and native policy.")
+                Text("Verifying Rico policy").font(.headline)
+                Text("Admission stays open while Studio checks the local model, Gateway guard, and native policy. This is not a Pause.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
             if store.requiresIntentReview {
                 Button("Review and activate") { confirmResume = true }.buttonStyle(.borderedProminent)
             } else {
-                Button("Retry verification") { store.retryEnforcement() }.buttonStyle(.borderedProminent)
+                Button("Retry") { store.retryEnforcement() }.buttonStyle(.bordered)
             }
         }
         .padding(14)
-        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.orange.opacity(0.22)))
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.18)))
     }
 
     private var healthOverview: some View {
@@ -4100,23 +4063,23 @@ struct RicoCommunicationsView: View {
     private var imessageChecking: Bool { store.imessageProbeReadiness == nil }
     private var enforcementLabel: String {
         switch store.enforcementState {
-        case .applying: store.globalPaused ? "Pause syncing" : store.healthQuarantined ? "Safety syncing" : "Policy syncing"
-        case .verified: store.globalPaused ? "Messaging paused" : store.healthQuarantined ? "Admission quarantined" : "Guard verified"
-        case .failed: "Enforcement error"
+        case .applying: store.globalPaused ? "Pause syncing" : "Policy syncing"
+        case .verified: store.globalPaused ? "Messaging paused" : "Guard verified"
+        case .failed: store.globalPaused ? "Pause retrying" : "Verification retrying"
         }
     }
     private var enforcementColor: Color {
         switch store.enforcementState {
         case .applying: .orange
-        case .verified: store.globalPaused || store.healthQuarantined ? .orange : .green
-        case .failed: .red
+        case .verified: store.globalPaused ? .orange : .green
+        case .failed: store.globalPaused ? .orange : .secondary
         }
     }
     private var enforcementSymbol: String {
         switch store.enforcementState {
         case .applying: "arrow.triangle.2.circlepath"
-        case .verified: store.globalPaused ? "pause.fill" : store.healthQuarantined ? "shield.slash.fill" : "checkmark.shield.fill"
-        case .failed: "exclamationmark.shield.fill"
+        case .verified: store.globalPaused ? "pause.fill" : "checkmark.shield.fill"
+        case .failed: "arrow.triangle.2.circlepath"
         }
     }
     private var pauseVerified: Bool {

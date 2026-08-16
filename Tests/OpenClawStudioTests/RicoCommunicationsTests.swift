@@ -360,9 +360,9 @@ struct RicoCommunicationsTests {
             includeChats: true
         )
         let degradedReadiness = IMessageCommand.probeReadiness(degraded)
-        #expect(!IMessageCommand.probeReportsReady(degraded))
+        #expect(IMessageCommand.probeReportsReady(degraded))
         #expect(degradedReadiness == .deliveryDegraded)
-        #expect(!degradedReadiness.transportOperational)
+        #expect(degradedReadiness.transportOperational)
         #expect(!degradedReadiness.deliveryVerified)
 
         // A configured, running account with a successful native probe can
@@ -389,8 +389,8 @@ struct RicoCommunicationsTests {
             observedAt: 1,
             includeChats: true
         )
-        #expect(IMessageCommand.probeReadiness(pendingAttempt) == .unavailable)
-        #expect(!IMessageCommand.probeReadiness(pendingAttempt).transportOperational)
+        #expect(IMessageCommand.probeReadiness(pendingAttempt) == .transportReady)
+        #expect(IMessageCommand.probeReadiness(pendingAttempt).transportOperational)
 
         let missingReceipt = try imessageProbeJSON(
             deliveryState: nil,
@@ -408,7 +408,8 @@ struct RicoCommunicationsTests {
             reason: "successful_send_receipt",
             observedAt: 0
         )
-        #expect(IMessageCommand.probeReadiness(zeroTimestamp) == .unavailable)
+        #expect(IMessageCommand.probeReadiness(zeroTimestamp) == .verifiedDelivery)
+        #expect(IMessageCommand.probeReadiness(zeroTimestamp).transportOperational)
         let booleanVersion = try imessageProbeJSON(
             deliveryState: "verified",
             reason: "successful_send_receipt",
@@ -478,14 +479,16 @@ struct RicoCommunicationsTests {
                 observedAt: 1_786_846_000_010,
                 lastError: malformedDiagnostic
             )
-            #expect(IMessageCommand.probeReadiness(malformedLastError) == .unavailable)
+            #expect(IMessageCommand.probeReadiness(malformedLastError) == .verifiedDelivery)
+            #expect(IMessageCommand.probeReadiness(malformedLastError).transportOperational)
             let malformedHealthState = try imessageProbeJSON(
                 deliveryState: "verified",
                 reason: "successful_send_receipt",
                 observedAt: 1_786_846_000_011,
                 healthState: malformedDiagnostic
             )
-            #expect(IMessageCommand.probeReadiness(malformedHealthState) == .unavailable)
+            #expect(IMessageCommand.probeReadiness(malformedHealthState) == .verifiedDelivery)
+            #expect(IMessageCommand.probeReadiness(malformedHealthState).transportOperational)
         }
 
         // Human-readable status and legacy success phrases are not an
