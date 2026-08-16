@@ -1,0 +1,22 @@
+{
+  "id": "rico-workflow",
+  "name": "Rico Workflow Compiler",
+  "description": "Owner-only natural-language text scheduler and workflow installer for Rico.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "activation": { "onStartup": true },
+  "contracts": {
+    "hooks": ["before_prompt_build", "before_tool_call"],
+    "tools": [
+      "rico_schedule_text",
+      "rico_workflow_compile",
+      "rico_workflow_install",
+      "rico_workflow_list",
+      "rico_workflow_cancel"
+    ]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "rico-ists-incident",
+  "name": "Rico ISTS Incident Monitor",
+  "description": "Exact-source ISTS context, reviewed Jeff alert, and an optional deterministic any-local-group IMT question ingress.",
+  "version": "0.4.3",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Explicitly enables the three-minute monitor only after the private grant and reviewed adapter are installed."
+      },
+      "anyGroupEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Independently enables the bounded any-local-group IMT-to-Polar scanner. It does not enable Colleague Zone or broaden normal Rico ingress."
+      },
+      "adapterModule": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to an operator-reviewed mode-0600 adapter module."
+      },
+      "anyGroupAdapterModule": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to the reviewed one-purpose any-local-group IMT adapter. Required only when the private grant explicitly enables anyLocalGroup."
+      },
+      "colleagueZoneAdapterModule": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to the separately reviewed mode-0600, read-only Colleague Zone adapter that uses a dedicated browser-managed persistent profile. Required only when that private source grant is enabled."
+      },
+      "permissionFile": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to the private exact-authority grant."
+      },
+      "stateDirectory": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute mode-0700 directory for the private hash-chained state and outbox."
+      }
+    }
+  },
+  "activation": { "onStartup": true },
+  "contracts": {
+    "services": ["rico-ists-incident"],
+    "gatewayMethods": ["rico.ists-incident.status"]
+  }
+}

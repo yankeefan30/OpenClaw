@@ -1,0 +1,25 @@
+{
+  "name": "rico-escalation-handoff",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.3"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check authorization.js && node --check automatic-imt.mjs && node --check handoff.js && node --check result-contract.js",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "rico-ists-incident",
+  "version": "0.4.3",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./runtime.mjs",
+    "./plugin": "./index.js",
+    "./activation": "./activation.mjs",
+    "./status": "./status.mjs",
+    "./colleague-zone-adapter": "./colleague-zone-adapter/index.mjs",
+    "./any-group": "./any-group-ingress.mjs",
+    "./any-group-adapter": "./adapters/any-local-group.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs colleague-zone-adapter/tests/*.test.mjs",
+    "check": "node --check index.js && node --check runtime.mjs && node --check definition.mjs && node --check grant.mjs && node --check contracts.mjs && node --check state-store.mjs && node --check engine.mjs && node --check context-provider.mjs && node --check audience-context.mjs && node --check imsg-executable.mjs && node --check any-group-classifier.mjs && node --check any-group-contracts.mjs && node --check any-group-ingress.mjs && node --check any-group-source.mjs && node --check any-group-state-store.mjs && node --check service.mjs && node --check activation.mjs && node --check status.mjs && node --check RicoEscalationHandoff/handoff.js && node --check RicoEscalationHandoff/automatic-imt.mjs && node --check RicoEscalationHandoff/result-contract.js && node --check adapters/local-imessage.mjs && node --check adapters/any-local-group.mjs && node --check scripts/ists-incident.mjs && node --check colleague-zone-adapter/index.mjs && node --check colleague-zone-adapter/browser-runtime.mjs && node --check colleague-zone-adapter/parser.mjs && node --check colleague-zone-adapter/selectors.mjs && node --check colleague-zone-adapter/scripts/reauth.mjs"
+  },
+  "optionalDependencies": {
+    "playwright-core": ">=1.55.0 <2"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1 <2027"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}

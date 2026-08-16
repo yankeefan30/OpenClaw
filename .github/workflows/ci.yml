@@ -1,0 +1,17 @@
+name: Claw Console CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Swift toolchain
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Run protocol fixtures
+        run: swift run OpenClawStudioFixtures

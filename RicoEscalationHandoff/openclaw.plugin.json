@@ -1,0 +1,14 @@
+{
+  "id": "rico-escalation-handoff",
+  "name": "Rico Stuck-Question Escalation Handoff",
+  "version": "0.1.1",
+  "description": "A request-ID-scoped local bridge from Rico's verified visible iMessage question to a private research inbox and its matching outbox result.",
+  "contracts": {
+    "tools": ["rico_stuck_question_escalate"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

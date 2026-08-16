@@ -1,0 +1,23 @@
+{
+  "name": "@openclaw/grok-companions-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fail-closed, local-only Bad Rudy capture worker for OpenClaw Studio",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "selftest": "node --experimental-strip-types index.ts --selftest",
+    "status": "node --experimental-strip-types index.ts --status"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

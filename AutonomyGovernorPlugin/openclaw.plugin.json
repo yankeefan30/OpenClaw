@@ -1,0 +1,45 @@
+{
+  "id": "rico-autonomy-governor",
+  "name": "Rico Autonomy Governor",
+  "description": "Fail-closed mission policy, budgets, idempotency, and audit enforcement for autonomous Rico runs.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "stateDirectory": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute directory for the governor's private durable state."
+      }
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "hooks": [
+      "before_agent_run",
+      "agent_end",
+      "before_tool_call",
+      "after_tool_call",
+      "message_sending",
+      "message_sent"
+    ],
+    "gatewayMethods": [
+      "rico.autonomy.status",
+      "rico.autonomy.missions.list",
+      "rico.autonomy.missions.get",
+      "rico.autonomy.events.list",
+      "rico.autonomy.evaluate",
+      "rico.autonomy.missions.upsert",
+      "rico.autonomy.missions.activate",
+      "rico.autonomy.missions.pause",
+      "rico.autonomy.missions.resume",
+      "rico.autonomy.missions.advance",
+      "rico.autonomy.global.pause",
+      "rico.autonomy.global.resume"
+    ]
+  }
+}

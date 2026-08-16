@@ -1,0 +1,33 @@
+{
+  "id": "rico-janet-receipt",
+  "name": "Rico Janet Receipt Workflow",
+  "description": "Exact-Janet, same-thread, fail-closed receipt retrieval and locked Gmail delivery workflow.",
+  "version": "0.2.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["adapterModule"],
+    "properties": {
+      "adapterModule": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to an operator-reviewed private MCP adapter module."
+      },
+      "permissionFile": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute path to the private 0600 exact-identity grant."
+      },
+      "stateDirectory": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/",
+        "description": "Absolute private directory for ledger and reports."
+      }
+    }
+  },
+  "activation": { "onStartup": true },
+  "contracts": { "hooks": ["inbound_claim"] }
+}

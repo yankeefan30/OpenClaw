@@ -1,0 +1,13 @@
+{
+  "name": "openclaw-studio-bad-rudy-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "rollback": "node scripts/bad-rudy.mjs --rollback-bad-rudy"
+  }
+}

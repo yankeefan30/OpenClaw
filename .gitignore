@@ -1,0 +1,45 @@
+# Build products
+.build/
+.swiftpm/
+dist/
+*.app
+*.dSYM/
+
+# Local backups and cutovers (not source)
+backups/
+install-backups/
+
+# OS / editor
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Secrets and live state — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+credentials.json
+**/credentials.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+
+# Monitor rollback snapshots
+RicoCommsMonitor/rollback-*/
+
+# Local runtime receipts
+**/.runner-receipt.json
+
+# Packaging leftovers
+OpenClawStudio-install.*

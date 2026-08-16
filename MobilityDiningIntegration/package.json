@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-mobility-dining-integration",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "mobility-dining-integration": "./index.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "status": "node index.mjs status"
+  }
+}

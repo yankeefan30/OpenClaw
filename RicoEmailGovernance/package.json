@@ -1,0 +1,9 @@
+{
+  "name": "rico-email-governance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check index.mjs && node --check definition.mjs && node --check policy.mjs && node --check private-store.mjs && node --check grant.mjs && node --check ledger.mjs && node --check adapter-contract.mjs && node --check attachments.mjs && node --check dispatcher.mjs && node --check meeting-handoff.mjs && node --check group-email-broker.mjs && node --check native-outlook-adapter.mjs && node --check group-email-tool.mjs && node --check runtime-providers.mjs"
+  }
+}

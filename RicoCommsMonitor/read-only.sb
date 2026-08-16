@@ -1,0 +1,25 @@
+(version 1)
+(allow default)
+
+; The collector may read OpenClaw configuration so the CLI can authenticate to
+; the local gateway, but neither it nor its child may change Rico/OpenClaw,
+; Studio, Grok, Codex, launch service, or application state.
+(deny file-write*
+  (subpath "/Users/alan/.openclaw")
+  (subpath "/Users/alan/.codex")
+  (subpath "/Users/alan/OpenClawStudio")
+  (subpath "/Users/alan/Library/LaunchAgents")
+  (subpath "/Users/alan/Library/Application Support/Grok Bot")
+  (subpath "/Users/alan/Library/Application Support/OpenClaw Studio")
+  (subpath "/Applications/OpenClaw Studio.app"))
+
+; The source has one exact executable child path. These additional denials make
+; common mutation/control escape hatches unavailable even after code injection.
+(deny process-exec
+  (literal "/bin/sh")
+  (literal "/bin/bash")
+  (literal "/bin/zsh")
+  (literal "/bin/launchctl")
+  (literal "/usr/bin/osascript")
+  (literal "/usr/bin/open")
+  (literal "/usr/bin/security"))

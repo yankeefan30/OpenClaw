@@ -1,0 +1,15 @@
+{
+  "name": "rico-outlook-mail-monitor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check index.js && node --check definition.mjs && node --check engine.mjs && node --check grant.mjs && node --check service.mjs && node --check state-store.mjs"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1 <2027"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}
