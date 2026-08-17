@@ -29,19 +29,17 @@ export function authorizeRecipient({ policy, channel = {}, target }) {
     throw fail("recipient_not_allowlisted", "Recipient is not on Rico's allowlist.");
   }
 
-  if (E164.test(expected) && Array.isArray(channel.allowFrom)) {
+  // Native allowFrom is defense in depth for strangers. An already
+  // approved/trusted/owner identity in the recipient-guard policy is
+  // authoritative and must not be dropped because Studio's native list is stale.
+  if (E164.test(expected) && Array.isArray(channel.allowFrom) && !ALLOWED_ACCESS.has(identity.access)) {
     const allowed = new Set(channel.allowFrom.map((item) => normalize(item)).filter(Boolean));
     if (!allowed.has(expected)) {
       throw fail("recipient_not_allowlisted", "Recipient is not on Rico's allowlist.");
     }
   }
 
-  if (CHAT_ID.test(expected) && channel.groups && typeof channel.groups === "object" && !Array.isArray(channel.groups)) {
-    const chatId = expected.slice("chat_id:".length);
-    if (!Object.prototype.hasOwnProperty.call(channel.groups, chatId)) {
-      throw fail("recipient_not_allowlisted", "Recipient is not on Rico's allowlist.");
-    }
-  }
+  // Native groups/allowFrom are extra approvals, never a second deny gate.
 
   return {
     ok: true,

@@ -2,8 +2,8 @@
   "id": "rico-recipient-guard",
   "name": "Rico Recipient Guard",
   "description": "Fail-closed recipient enforcement for Rico iMessage delivery.",
-  "version": "0.5.7",
+  "version": "0.5.11",
   "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
   "activation": { "onStartup": true },
-  "contracts": { "hooks": ["inbound_claim", "before_dispatch", "before_prompt_build", "before_agent_run", "before_tool_call", "agent_end", "reply_payload_sending", "message_sending"], "gatewayMethods": ["rico.imessage.groups", "rico.recipient.status"], "tools": ["rico_group_email_execute"] }
+  "contracts": { "hooks": ["inbound_claim", "before_dispatch", "before_prompt_build", "before_agent_run", "before_tool_call", "agent_end", "reply_payload_sending", "message_sending"], "gatewayMethods": ["rico.imessage.groups", "rico.recipient.status", "rico.recipient.openGeneralReplies"], "tools": ["rico_group_email_execute"] }
 }

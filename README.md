@@ -73,8 +73,10 @@ Contacts resolve display names to exact phone numbers or email addresses;
 display names are never authentication. Individual and group policies are
 stored privately and mirrored into OpenClaw's native iMessage allowlists. The
 Rico guard fails closed for unknown senders, unknown group participants,
-missing `@rico` mentions, disabled auto-replies, quiet hours, and emergency
-pause. Owner-initiated sends require an explicit draft review and use an
+disabled auto-replies, group `@rico` mentions, group quiet hours, and emergency
+pause. Approved ISTS/VIP directs skip quiet hours and `@rico`, always send
+without a one-shot grant, start on Claude, and never receive model-fallback
+telemetry. Owner-initiated sends require an explicit draft review and use an
 atomic, single-use, two-minute grant containing a SHA-256 message digest rather
 than message plaintext.
 
@@ -155,6 +157,8 @@ auto-send LaunchAgent.
 ```sh
 swift test --disable-sandbox
 (cd OpenClawPlugin && npm test)
+(cd RicoVipRoute && npm test)
+(cd RicoIMessageMCP && npm test)
 node --test IMsgOwnerRoute/imsg-owner-route.test.mjs
 (cd AutonomyGovernorPlugin && npm test && npm run check)
 (cd RicoEmailGovernance && npm run check && npm test)

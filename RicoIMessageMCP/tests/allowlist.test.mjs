@@ -65,6 +65,13 @@ test("allowlist accepts owner, approved contact, and approved group", () => {
   assert.equal(authorizeRecipient({ policy: current, target: "chat_id:99" }).access, "owner");
 });
 
+test("approved contact chat ids match without a one-shot grant", () => {
+  const jeff = { ...contact, target: "+18148814454", directChatId: 321, vip: true };
+  const current = policy([owner, jeff]);
+  assert.equal(authorizeRecipient({ policy: current, target: "+18148814454" }).access, "approved");
+  assert.equal(authorizeRecipient({ policy: current, target: "chat_id:321" }).access, "approved");
+});
+
 test("allowlist rejects strangers, blocked identities, and paused policy", () => {
   const current = policy([owner, contact, group, blocked]);
   assert.throws(() => authorizeRecipient({ policy: current, target: "+15550000111" }), { code: "recipient_not_allowlisted" });
@@ -73,23 +80,23 @@ test("allowlist rejects strangers, blocked identities, and paused policy", () =>
   assert.throws(() => authorizeRecipient({ policy: policy([owner], true), target: "+16469433060" }), { code: "paused" });
 });
 
-test("native allowFrom and groups are a second fail-closed gate", () => {
+test("native allowFrom cannot drop an already-approved identity", () => {
   const current = policy([owner, contact, group]);
-  assert.throws(() => authorizeRecipient({
+  assert.equal(authorizeRecipient({
     policy: current,
     channel: { allowFrom: ["+16469433060"] },
     target: "+15550000002",
-  }), { code: "recipient_not_allowlisted" });
+  }).access, "approved");
   assert.equal(authorizeRecipient({
     policy: current,
     channel: { allowFrom: ["+16469433060", "+15550000002"] },
     target: "+15550000002",
   }).ok, true);
-  assert.throws(() => authorizeRecipient({
+  assert.equal(authorizeRecipient({
     policy: current,
     channel: { groups: { "7": { requireMention: true } } },
     target: "chat_id:24",
-  }), { code: "recipient_not_allowlisted" });
+  }).kind, "group");
 });
 
 test("send tool rejects strangers without calling Gateway send", async () => {

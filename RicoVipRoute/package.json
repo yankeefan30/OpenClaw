@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-plugin-rico-vip-route",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "scripts": { "test": "node --test route.test.mjs" },
+  "peerDependencies": { "openclaw": ">=2026.7.1" },
+  "openclaw": { "extensions": ["./index.js"] }
+}

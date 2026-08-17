@@ -4,6 +4,14 @@ export const RICO_ESCALATION_PLUGIN_ID = "rico-escalation-handoff";
 export const RICO_ESCALATION_TOOL_NAME = "rico_stuck_question_escalate";
 export const RICO_SHARED_AGENT_ID = "rico-shared";
 export const RICO_SHARED_WORKSPACE = "/Users/alan/.openclaw/workspace-rico-shared";
+export const RICO_VIP_AGENT_ID = "rico-vip";
+export const RICO_VIP_WORKSPACE = "/Users/alan/.openclaw/workspace-rico-vip";
+
+function allowedEscalationAgent(agentId, workspaceDir) {
+  if (agentId === RICO_SHARED_AGENT_ID && workspaceDir === RICO_SHARED_WORKSPACE) return true;
+  if (agentId === RICO_VIP_AGENT_ID && workspaceDir === RICO_VIP_WORKSPACE) return true;
+  return false;
+}
 export const RICO_ESCALATION_ORIGIN_CONTRACT = "rico-recipient-guard/escalation-origin/v1";
 export const RICO_ESCALATION_ORIGIN_SYMBOL_KEY = "rico.recipient-guard.escalation-origin/v1";
 
@@ -43,7 +51,8 @@ function exactCorrelated(...values) {
 
 function classifySharedSession(sessionKey) {
   const key = cleanSingleLine(sessionKey, 1200).toLowerCase();
-  if (!key.startsWith(`agent:${RICO_SHARED_AGENT_ID}:imessage:`)) return "";
+  if (!key.startsWith(`agent:${RICO_SHARED_AGENT_ID}:imessage:`)
+      && !key.startsWith(`agent:${RICO_VIP_AGENT_ID}:imessage:`)) return "";
   if (key.includes(":group:")) return "group";
   if (key.includes(":direct:")) return "direct";
   return "";
@@ -144,10 +153,14 @@ export function escalationToolConfiguredForContext(context, config) {
   if (!isSharedEscalationAudience(context)) return false;
   const agents = config?.agents?.list;
   if (!Array.isArray(agents)) return false;
-  const matches = agents.filter((agent) => agent?.id === RICO_SHARED_AGENT_ID && agent?.workspace === RICO_SHARED_WORKSPACE);
-  if (matches.length !== 1 || matches[0]?.tools?.elevated?.enabled !== false ||
-      !exactRestrictiveToolAllow(matches[0]?.tools)) return false;
-  const policies = matches[0].tools?.toolsBySender;
+  const matches = agents.filter((agent) =>
+    (agent?.id === RICO_SHARED_AGENT_ID && agent?.workspace === RICO_SHARED_WORKSPACE)
+    || (context?.conversationType === "direct" && agent?.id === RICO_VIP_AGENT_ID && agent?.workspace === RICO_VIP_WORKSPACE)
+  );
+  if (matches.length < 1 || matches.some((agent) => agent?.tools?.elevated?.enabled !== false
+      || !exactRestrictiveToolAllow(agent?.tools))) return false;
+  const selected = matches.find((agent) => agent?.id === RICO_VIP_AGENT_ID) ?? matches[0];
+  const policies = selected.tools?.toolsBySender;
   if (!policies || typeof policies !== "object" || Array.isArray(policies)) return false;
   const senderKey = `channel:imessage:${normalizeHandle(context.senderHandle)}`;
   const exactPolicies = Object.entries(policies).filter(([key]) => key.toLowerCase() === senderKey);
@@ -254,7 +267,7 @@ export function createSharedEscalationProofRegistry({
     const toolCallId = exactCorrelated(event?.toolCallId, ctx?.toolCallId);
     const entry = runId ? entries.get(runId) : undefined;
     return Boolean(entry && toolCallId && event?.toolName === RICO_ESCALATION_TOOL_NAME &&
-      ctx?.toolName === RICO_ESCALATION_TOOL_NAME && ctx?.agentId === RICO_SHARED_AGENT_ID &&
+      ctx?.toolName === RICO_ESCALATION_TOOL_NAME && allowedEscalationAgent(ctx?.agentId, ctx?.workspaceDir) &&
       cleanSingleLine(ctx?.sessionKey, 1200) === entry.sessionKey &&
       cleanSingleLine(ctx?.sessionId, 512) === entry.sessionId &&
       isSharedEscalationAudience(context) && context?.escalationCapability?.available === true &&
@@ -273,8 +286,8 @@ export function createSharedEscalationProofRegistry({
       const sessionId = cleanSingleLine(ctx?.sessionId, 512);
       const conversationType = classifySharedSession(sessionKey);
       const question = String(event?.prompt ?? "");
-      if (!runId || !sessionId || ctx?.agentId !== RICO_SHARED_AGENT_ID ||
-          ctx?.workspaceDir !== RICO_SHARED_WORKSPACE || conversationType !== context?.conversationType ||
+      if (!runId || !sessionId || !allowedEscalationAgent(ctx?.agentId, ctx?.workspaceDir) ||
+          conversationType !== context?.conversationType ||
           !isSharedEscalationAudience(context) || context?.escalationCapability?.available !== true ||
           context?.escalationCapability?.toolName !== RICO_ESCALATION_TOOL_NAME || !question || question.length > 4_000 ||
           /^(?:System|Developer|Assistant):[ \t]/u.test(question) ||
@@ -308,8 +321,8 @@ export function createSharedEscalationProofRegistry({
         toolName: RICO_ESCALATION_TOOL_NAME,
         toolCallId,
         runId,
-        agentId: RICO_SHARED_AGENT_ID,
-        workspaceDir: RICO_SHARED_WORKSPACE,
+        agentId: ctx.agentId,
+        workspaceDir: ctx.workspaceDir,
         sessionKey: entry.sessionKey,
         sessionId: entry.sessionId,
         requesterSenderId: entry.senderHandle,
