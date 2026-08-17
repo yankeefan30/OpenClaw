@@ -1111,6 +1111,137 @@ export function isPrivilegedOutboundAccess(access) {
   return OUTBOUND_ACCESS.has(String(access ?? "").toLowerCase());
 }
 
+const UNSOLICITED_OUTBOUND_TRIGGERS = new Set([
+  "heartbeat",
+  "cron",
+  "scheduled",
+  "background",
+  "session_resume",
+  "resume",
+  "startup",
+  "gateway_start",
+  "catchup",
+  "catch_up",
+]);
+
+export function isUnsolicitedOutboundTrigger(event, ctx = {}) {
+  const values = [event?.trigger, ctx?.trigger, event?.wakeReason, ctx?.wakeReason];
+  return values.some((value) => {
+    const normalized = String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
+    return UNSOLICITED_OUTBOUND_TRIGGERS.has(normalized);
+  });
+}
+
+function inboundTimestampMs(event, ctx = {}) {
+  const raw = event?.timestamp ?? event?.ts ?? ctx?.timestamp ?? ctx?.ts ?? event?.createdAt ?? ctx?.createdAt;
+  if (raw == null || raw === "") return undefined;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw < 1e12 ? raw * 1000 : raw;
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Exact conversation keys for the inbound-this-uptime rule.
+ * `imessage:default:direct` is a shared session bucket, never a thread.
+ */
+export function conversationThreadKeys(event, ctx = {}) {
+  const keys = new Set();
+  const addChat = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return;
+    const normalized = normalize(raw);
+    if (normalized.startsWith("chat_id:") || normalized.startsWith("chat_guid:") || normalized.startsWith("chat_identifier:")) {
+      keys.add(normalized);
+      return;
+    }
+    if (/^\d+$/.test(raw)) keys.add(`chat_id:${raw}`);
+  };
+  const addDirect = (value) => {
+    const handle = validSenderHandle(value);
+    if (handle) keys.add(`direct:${handle}`);
+  };
+
+  addChat(event?.threadId);
+  addChat(event?.conversationId);
+  addChat(event?.to);
+  addChat(event?.recipient);
+  addChat(ctx?.chatId);
+  addChat(ctx?.conversationId);
+  addChat(ctx?.to);
+  addDirect(event?.senderId);
+  addDirect(ctx?.senderId);
+  addDirect(event?.to);
+  addDirect(event?.recipient);
+  addDirect(ctx?.to);
+
+  const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
+  const namedDirect = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
+  if (namedDirect && namedDirect[1].toLowerCase() !== "default") {
+    addDirect(namedDirect[1]);
+    addChat(namedDirect[1]);
+  }
+  const group = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
+  if (group && !/:imessage:default:direct/i.test(sessionKey)) {
+    addChat(/^\d+$/.test(group[1]) ? `chat_id:${group[1]}` : group[1]);
+  }
+  return [...keys];
+}
+
+export function hasHumanInboundEvidence(event, ctx = {}) {
+  if (isUnsolicitedOutboundTrigger(event, ctx)) return false;
+  if (!exactSender(event, ctx)) return false;
+  const text = String(event?.bodyForAgent ?? event?.body ?? event?.content ?? "").trim();
+  const messageId = String(event?.messageId ?? ctx?.messageId ?? "").trim();
+  return Boolean(text || messageId);
+}
+
+function inboundUptimeAllows(inboundUptime, event, ctx = {}, extraTargets = []) {
+  if (!inboundUptime) return false;
+  const probes = [event, ...extraTargets.filter((value) => value != null && String(value).trim() !== "").map((to) => ({
+    ...event,
+    to,
+  }))];
+  return probes.some((item) => {
+    if (typeof inboundUptime.hasThread === "function") return inboundUptime.hasThread(item, ctx);
+    const allowed = inboundUptime instanceof Set
+      ? inboundUptime
+      : new Set(Array.isArray(inboundUptime) ? inboundUptime : []);
+    return conversationThreadKeys(item, ctx).some((key) => allowed.has(key));
+  });
+}
+
+export function createInboundUptimeLedger({ startedAt = Date.now() } = {}) {
+  const threads = new Set();
+  return {
+    startedAt,
+    rememberHumanInbound(event, ctx = {}) {
+      if (!hasHumanInboundEvidence(event, ctx)) return false;
+      const timestamp = inboundTimestampMs(event, ctx);
+      if (Number.isFinite(timestamp) && timestamp < startedAt) return false;
+      const keys = conversationThreadKeys(event, ctx);
+      if (keys.length === 0) return false;
+      for (const key of keys) threads.add(key);
+      return true;
+    },
+    hasThread(event, ctx = {}) {
+      return conversationThreadKeys(event, ctx).some((key) => threads.has(key));
+    },
+    keys() {
+      return [...threads];
+    },
+  };
+}
+
+export function authorizeIMessageAgentRun({ event = {}, ctx = {}, inboundUptime } = {}) {
+  if (isUnsolicitedOutboundTrigger(event, ctx)) {
+    return { allow: false, reason: "unsolicited_trigger" };
+  }
+  if (!inboundUptimeAllows(inboundUptime, event, ctx)) {
+    return { allow: false, reason: "no_inbound_this_uptime" };
+  }
+  return { allow: true, reason: "inbound_this_uptime" };
+}
+
 export function readIstsVipHandles(supportDirectory) {
   try {
     const grantPath = path.join(supportDirectory, "workflows", "ists-incident", "permission-grant.json");
@@ -1176,11 +1307,26 @@ export function createApprovedTargetMemory() {
 export function authorizeOutboundSend({
   target,
   candidates = [],
+  event,
+  ctx = {},
   policy,
   policyError = false,
   allowFrom = [],
   knownApproved = [],
+  inboundUptime,
+  trigger,
 } = {}) {
+  const outboundEvent = { ...(event ?? {}) };
+  if (outboundEvent.to == null && target != null) outboundEvent.to = target;
+  const outboundCtx = trigger != null ? { ...ctx, trigger } : { ...ctx };
+
+  if (isUnsolicitedOutboundTrigger(outboundEvent, outboundCtx)) {
+    return { allow: false, reason: "unsolicited_trigger" };
+  }
+  if (!inboundUptimeAllows(inboundUptime, outboundEvent, outboundCtx, [target, ...candidates])) {
+    return { allow: false, reason: "no_inbound_this_uptime" };
+  }
+
   const approved = new Set();
   const add = (value) => {
     const normalized = normalize(value);

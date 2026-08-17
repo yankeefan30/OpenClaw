@@ -1,9 +1,12 @@
-# Rico bring-up after the 2026-08-17 guard repair
+# Rico bring-up after the 2026-08-17 unsolicited-send repair
 
-Rico stays **offline** until Polar applies this on the Mac Mini. Do not start
-the Gateway from this checkout. Do not send iMessages from this agent.
+Rico stays **offline** until Polar says otherwise. Do not start the Gateway
+from this checkout. Do not send iMessages from this agent. Do not disable SIP.
+Do not dump tokens, Keychain, or phone numbers.
 
-## Live ground truth (7:40–7:55 ET)
+## Live ground truth
+
+### Morning (7:40–7:55 ET) — bad replies in threads that already had inbound
 
 Not a blast. 11 outbound from Alan’s line into **2 chats only**:
 
@@ -17,16 +20,40 @@ Not a blast. 11 outbound from Alan’s line into **2 chats only**:
 
 Guard was present at 07:43:44 (20 plugins) and gone after 07:46:06 (19 plugins). Default model stayed Qwen.
 
-## What this repair changed
+### Evening (8:45–8:51 ET) — Rico initiated
 
-1. Strangers fail closed. Approved / VIP / owner / `allowFrom` always send. Grants are not required. Policy-read throws fail open.
-2. `Model Fallback:` / timeout / unavailable, `blocked by rico-recipient-guard`, and `[assistant turn failed before producing content]` never deliver. An empty Qwen 32ms 200 is not a user-visible timeout.
-3. Approved directs start Claude on the live `imessage:default:direct` session. No `vip: true` flag and no new `rico-vip` agent are required.
-4. Direct DMs use a private one-to-one prompt. Ana+Janet `chat_id:24` uses a colleague prompt. Neither is a shared public-safe space. Last-mile also cancels “ask Alan directly” shrugs.
+Worse than the morning. Polar brought the Gateway up only so Alan could send
+his own DM. Rico then texted people who had not written, including Al Sassoon
+(VIP). Polar took Rico down again (LaunchAgent disabled, 18789 down,
+`intentional_offline` true). **Do not bring him back.**
+
+Root cause: guard 0.5.8 last-mile treated approved / VIP / owner identity as
+enough to deliver. Gateway start resumed or flushed a `rico-shared` turn.
+Live `imessage:default:direct` is a shared session bucket, not a person, and
+`isVipDirectTurn` returned true for any default:direct. Last-mile banner
+cancel does not stop a normal-looking unsolicited hello.
+
+## What this repair changed (guard 0.5.9)
+
+1. Rico never sends an iMessage unless that **exact thread** had a new human
+   inbound during **this Gateway uptime**. Thread keys are chat id / handle.
+   `default:direct` is never a thread.
+2. Gateway start, session resume, queued assistant flush, heartbeat, cron,
+   and catch-up cannot deliver. A VIP flag, a session, or default:direct
+   matching is not a send.
+3. Approved / VIP / owner still always send when **they** message. Fail open
+   for those people on a real inbound. Fail closed for strangers. No grants
+   required. No `rico-vip` agent. No session reset.
+4. Groups still need the existing mention / quiet rules.
+5. Last-mile still cancels Model Fallback / guard-block / empty-turn /
+   public-safe shrugs.
+6. `default:direct` alone is not a VIP Claude pin. Jeff `chat_id=9` still
+   pins Claude when Jeff is the sender.
 
 ## Polar apply order (Mac Mini)
 
-Keep `ai.openclaw.gateway.plist.disabled` in place until step 5.
+Keep `ai.openclaw.gateway.plist.disabled` in place. **Gateway stays down
+until Polar says.** Prove “no outbound without inbound” **before** Alan’s DM.
 
 1. **Install the reviewed code** from this branch. Gateway stays down.
 
@@ -41,26 +68,46 @@ Keep `ai.openclaw.gateway.plist.disabled` in place until step 5.
    openclaw config set plugins.entries.rico-recipient-guard.hooks.allowPromptInjection true
    ```
 
-   Confirm guard version **0.5.8**. Do **not** re-enable autonomy plugins.
+   Confirm guard version **0.5.9**. Do **not** re-enable autonomy plugins.
+   Do **not** create a `rico-vip` agent. Do **not** reset sessions.
 
-3. **Set Jeff’s live chat id**
+3. **Set Jeff’s live chat id** (still down)
 
    In `~/Library/Application Support/OpenClaw Studio/rico-recipient-guard.json`,
    Jeff (`+18148814454` / last4 4454): `"directChatId": 9`.
    Confirm Ana+Janet remains `chat_id:24`. Keep `0600` / `0700`.
-   Do not create a `rico-vip` agent. Do not reset session `3a2c545d-…` unless
-   it is still poisoned after Alan’s DM test.
 
-4. **QA before bring-up**
+4. **QA before Polar says the Gateway may come up**
 
-   1. Unknown recipient denied.
-   2. Approved VIP allowed with empty grants / throwing policy read. Live shape: Jeff `chat_id=9` on `default:direct`.
-   3. Fallback / timeout / unavailable / guard-block / empty-turn lines never delivered.
-   4. VIP session model is Claude, not Qwen.
-   5. Direct DM is not the public-safe/group shrug path.
-   6. Ana+Janet-style colleague group does not emit the public-safe ORIBE shrug.
+   From this checkout, with the Gateway still down:
 
-5. **Re-enable the LaunchAgent**
+   ```bash
+   node --test OpenClawPlugin/qa-incident-repair.test.mjs OpenClawPlugin/policy.test.mjs RicoVipRoute/route.test.mjs
+   ```
+
+   Those tests must fail if:
+
+   1. Gateway start / session resume / queued assistant would deliver with no
+      inbound in this uptime.
+   2. `default:direct` alone is treated as a VIP send.
+   3. Al Sassoon (or any VIP) can be texted with no inbound on that thread.
+
+   Also still true:
+
+   4. Unknown recipient denied.
+   5. Approved inbound still allowed: Jeff `chat_id=9` on `default:direct`,
+      Al if he writes, Alan owner DM. Empty grants / throwing policy read
+      fail open only on that real inbound.
+   6. Fallback / timeout / unavailable / guard-block / empty-turn /
+      public-safe shrugs never delivered.
+   7. VIP session model is Claude only when the sender is a VIP handle.
+   8. Ana+Janet-style colleague group does not emit the public-safe ORIBE shrug.
+
+5. **Polar proves “no outbound without inbound.”** Write that proof down.
+   Do not start the Gateway for Alan’s DM until Polar says the proof holds.
+   Keep 18789 down and the LaunchAgent disabled until then.
+
+6. **Only after Polar says:** re-enable the LaunchAgent
 
    ```bash
    mv ~/Library/LaunchAgents/ai.openclaw.gateway.plist.disabled \
@@ -70,18 +117,24 @@ Keep `ai.openclaw.gateway.plist.disabled` in place until step 5.
    ```
 
    If the Mini uses a different plist name, use that name. Confirm port
-   **18789** is listening only after this step.
+   **18789** is listening only after this step. On bring-up, Rico must send
+   **zero** iMessages until a human writes.
 
-6. **Alan’s own DM first.** Expect no `Model Fallback:` and no guard-block banner.
-   Do not text Jeff, Ana, Janet, or the group until that Alan DM is clean.
+7. **Alan’s own DM first**, and only after Polar says. Expect no
+   `Model Fallback:`, no guard-block banner, and no texts to anyone else.
+   Do not text Jeff, Al, Ana, Janet, or the group until that Alan DM is clean
+   and no unsolicited outbound occurred.
 
-7. **Abort** the same way as the incident: stop the Gateway, rename the plist
+8. **Abort** the same way as the incident: stop the Gateway, rename the plist
    `.disabled`, confirm 18789 is down.
 
 ## Do not
 
+- Start the Gateway before Polar says
 - Resume autonomy
 - Disable SIP
 - Send iMessages from Cursor / this PR runtime
 - Invent a wider blast
+- Create a `rico-vip` agent
+- Reset sessions
 - Leave `rico-recipient-guard` disabled after a successful Alan DM test

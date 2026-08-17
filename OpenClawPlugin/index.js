@@ -6,9 +6,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
+  authorizeIMessageAgentRun,
+  authorizeOutboundSend,
   consumeOwnerAuthorization,
   colleagueGroupSystemPrompt,
   createApprovedTargetMemory,
+  createInboundUptimeLedger,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -20,11 +23,11 @@ import {
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
   isInternalModelRoutingNotice,
-  isPrivilegedOutboundAccess,
   isPublicSafeDeflection,
   isVipDirectContext,
   normalize,
   outboundIdentity,
+  outboundTargetCandidates,
   parseIMessageGroups,
   prepareIMessageOutboundContent,
   readPolicy,
@@ -81,13 +84,14 @@ const grantsDirectory = path.join(directory, "owner-send-grants");
 const sessionAttestationPath = path.join(directory, "rico-sender-session-attestations.json");
 const senderContexts = createSenderContextRegistry();
 const approvedTargets = createApprovedTargetMemory();
+const inboundThreads = createInboundUptimeLedger();
 const peopleContexts = createPeopleContextRunRegistry();
 const sharedEscalationProofs = createSharedEscalationProofRegistry();
 const sessionAttestations = createSessionAttestationStore({
   filePath: sessionAttestationPath,
   supportDirectory: directory,
 });
-const guardVersion = "0.5.8";
+const guardVersion = "0.5.9";
 const guardContractVersion = "rico-recipient-guard/v6";
 const hookContract = [
   "inbound_claim",
@@ -253,6 +257,7 @@ export default definePluginEntry({
         approvedTargets.rememberPolicy(policy);
         const decision = evaluateInbound(event, ctx, policy);
         if (decision.allow) {
+          inboundThreads.rememberHumanInbound(event, ctx);
           approvedTargets.rememberInbound(event, ctx);
           const senderContext = resolveSenderContext(event, ctx, policy);
           if (senderContext?.conversationType === "group") {
@@ -274,6 +279,7 @@ export default definePluginEntry({
         return { handled: true };
       } catch (error) {
         api.logger.error?.(`Rico guard could not read inbound policy; failing open so an approved direct is not dropped: ${error instanceof Error ? error.message : String(error)}`);
+        inboundThreads.rememberHumanInbound(event, ctx);
         return;
       }
     }, { priority: 1000 });
@@ -294,6 +300,7 @@ export default definePluginEntry({
         };
         const decision = evaluateInbound(normalizedEvent, ctx, policy);
         if (!decision.allow) return { handled: true };
+        inboundThreads.rememberHumanInbound(normalizedEvent, ctx);
         approvedTargets.rememberInbound(normalizedEvent, ctx);
         const senderContext = resolveSenderContext(normalizedEvent, ctx, policy);
         let currentGroupMembership = true;
@@ -337,6 +344,7 @@ export default definePluginEntry({
         return;
       } catch (error) {
         api.logger.error?.(`Rico guard could not read policy before dispatch; failing open so an approved direct is not dropped: ${error instanceof Error ? error.message : String(error)}`);
+        inboundThreads.rememberHumanInbound(event, ctx);
         return;
       }
     }, { priority: 1000 });
@@ -490,6 +498,24 @@ export default definePluginEntry({
 
     api.on("before_agent_run", async (event, ctx) => {
       if (!isIMessageRun(event, ctx)) return;
+      const inboundGate = authorizeIMessageAgentRun({
+        event: inboundEventForAgentRun(event, {
+          ...ctx,
+          sessionKey: ctx.sessionKey ?? event.sessionKey,
+          chatId: ctx.chatId ?? event.chatId ?? event.threadId,
+          senderId: ctx.senderId ?? event.senderId,
+        }),
+        ctx,
+        inboundUptime: inboundThreads,
+      });
+      if (!inboundGate.allow) {
+        api.logger.error?.(`Rico guard blocked an iMessage run with no inbound this uptime: ${inboundGate.reason}`);
+        return {
+          outcome: "block",
+          reason: "Rico does not send iMessage without a new inbound on this thread during this gateway uptime.",
+          category: "inbound_required_this_uptime",
+        };
+      }
       const senderContext = senderContexts.get(ctx);
       // Verify the host-applied prompt itself. A timed-out prompt hook may
       // finish its local side effects after OpenClaw discarded its result; a
@@ -616,8 +642,7 @@ export default definePluginEntry({
 
     api.on("reply_payload_sending", async (event, ctx) => {
       const disposition = internalRuntimePayloadDisposition(event, ctx);
-      if (!disposition) return;
-      if (disposition.action === "replace") {
+      if (disposition?.action === "replace") {
         api.logger.warn?.(`Rico replaced internal runtime telemetry before external iMessage delivery: ${disposition.reason}`);
         return {
           payload: {
@@ -629,15 +654,31 @@ export default definePluginEntry({
           reason: "Internal runtime details were replaced with a provider-neutral error.",
         };
       }
-      api.logger.warn?.(`Rico suppressed internal runtime telemetry from external iMessage delivery: ${disposition.reason}`);
-      return {
-        cancel: true,
-        reason: "Internal runtime telemetry is not allowed in external iMessage delivery.",
-      };
+      if (disposition) {
+        api.logger.warn?.(`Rico suppressed internal runtime telemetry from external iMessage delivery: ${disposition.reason}`);
+        return {
+          cancel: true,
+          reason: "Internal runtime telemetry is not allowed in external iMessage delivery.",
+        };
+      }
+      const channel = String(event?.channel ?? ctx?.channelId ?? "").toLowerCase();
+      const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "").toLowerCase();
+      if (channel === "imessage" || sessionKey.includes(":imessage:")) {
+        const run = authorizeIMessageAgentRun({ event, ctx, inboundUptime: inboundThreads });
+        if (!run.allow) {
+          api.logger.warn?.(`Rico canceled an unsolicited iMessage payload: ${run.reason}`);
+          return {
+            cancel: true,
+            reason: "Rico does not send iMessage without a new inbound on this thread during this gateway uptime.",
+          };
+        }
+      }
+      return;
     }, { priority: 1200 });
 
     api.on("message_sending", async (event, ctx) => {
-      if (ctx.channelId !== "imessage") return;
+      const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "").toLowerCase();
+      if (ctx.channelId !== "imessage" && !sessionKey.includes(":imessage:")) return;
       try {
         const prepared = prepareIMessageOutboundContent(event.content);
         if (prepared.action === "cancel") {
@@ -674,6 +715,10 @@ export default definePluginEntry({
           policy = readPolicy(policyPath, directory);
           approvedTargets.rememberPolicy(policy);
         } catch (error) {
+          if (!inboundThreads.hasThread(event, ctx)) {
+            api.logger.error?.(`Rico guard could not read policy; failing closed without inbound this uptime: ${error instanceof Error ? error.message : String(error)}`);
+            return { cancel: true, cancelReason: "Rico does not send iMessage without a new inbound on this thread during this gateway uptime." };
+          }
           api.logger.error?.(`Rico guard could not read policy; failing open for outbound iMessage: ${error instanceof Error ? error.message : String(error)}`);
           return hadRoutingTelemetry || sanitizedRuntimeError || sanitizedEscalation ? { content: outboundContent } : undefined;
         }
@@ -713,21 +758,34 @@ export default definePluginEntry({
           }
         }
         const rewritten = hadRoutingTelemetry || sanitizedRuntimeError || sanitizedEscalation;
+        const decision = authorizeOutboundSend({
+          target: event.to,
+          candidates: outboundTargetCandidates(event, ctx),
+          event,
+          ctx,
+          policy,
+          inboundUptime: inboundThreads,
+          knownApproved: approvedTargets.values(),
+        });
+        if (!decision.allow) {
+          api.logger.warn?.(`Rico guard blocked an unsolicited or unknown iMessage: ${decision.reason}`);
+          return {
+            cancel: true,
+            cancelReason: decision.reason === "stranger"
+              ? "Recipient is not on Rico's allowlist."
+              : "Rico does not send iMessage without a new inbound on this thread during this gateway uptime.",
+          };
+        }
         // Studio creates a grant for each explicitly reviewed send. Consume it
-        // even when the target is already allowlisted so no valid grant lingers.
-        // An already-approved/trusted/owner direct never requires that grant.
-        if (consumeOwnerAuthorization(grantsDirectory, identity?.target ?? event.to, outboundContent)) {
-          return rewritten ? { content: outboundContent } : undefined;
-        }
-        if (identity && isPrivilegedOutboundAccess(identity.access)) {
-          return rewritten ? { content: outboundContent } : undefined;
-        }
-        if (approvedTargets.has(event.to) || approvedTargets.has(ctx.chatId) || approvedTargets.has(`chat_id:${ctx.chatId}`)) {
-          return rewritten ? { content: outboundContent } : undefined;
-        }
-        api.logger.warn?.(`Rico guard blocked an unknown iMessage target: ${normalize(event.to)}`);
-        return { cancel: true, cancelReason: "Recipient is not on Rico's allowlist." };
+        // after the inbound-this-uptime gate so a leftover grant cannot start
+        // a thread. An already-approved/trusted/owner direct never requires it.
+        consumeOwnerAuthorization(grantsDirectory, identity?.target ?? event.to, outboundContent);
+        return rewritten ? { content: outboundContent } : undefined;
       } catch (error) {
+        if (!inboundThreads.hasThread(event, ctx)) {
+          api.logger.error?.(`Rico guard could not finish outbound checks; failing closed without inbound this uptime: ${error instanceof Error ? error.message : String(error)}`);
+          return { cancel: true, cancelReason: "Rico does not send iMessage without a new inbound on this thread during this gateway uptime." };
+        }
         api.logger.error?.(`Rico guard could not finish outbound checks; failing open: ${error instanceof Error ? error.message : String(error)}`);
         return;
       }

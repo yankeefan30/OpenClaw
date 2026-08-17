@@ -8,9 +8,10 @@ Groups still require both. It cancels outbound delivery unless the exact
 phone/email/group target — or the `--deliver` chat id / session peer that maps
 to that identity — is approved in OpenClaw Studio. A one-shot owner grant is
 not required for an already-approved direct. Missing or unreadable policy files
-**fail open** on outbound (and no longer silently claim inbound) and log;
-strangers still fail closed when the policy is readable. Overly permissive
-schema still fails closed.
+**fail open** on outbound only when that exact thread had a new human inbound
+during this Gateway uptime (and no longer silently claim inbound) and log;
+strangers still fail closed. A VIP flag, a session, or `default:direct` is
+not a send. Overly permissive schema still fails closed.
 
 For each admitted iMessage turn, the guard binds the exact sender to the
 Gateway run ID and injects a minimal trusted sender block before prompt build.
@@ -60,6 +61,13 @@ The group-email definition is registered statically for reliable tool-catalog
 resolution, but only an exact verified owner/group `before_tool_call` can mint
 that execution grant; owner-direct, non-owner, and unproved calls remain
 blocked.
+
+Guard 0.5.9 never delivers an iMessage unless that exact thread (chat id or
+handle, never `default:direct`) had a new human inbound during this Gateway
+uptime. Gateway start, session resume, queued assistant flush, heartbeat,
+cron, and catch-up cannot send. Approved / VIP / owner still fail open when
+they write. Last-mile still cancels Model Fallback / guard-block / empty-turn
+/ public-safe shrugs.
 
 Guard 0.5.8 also applies a deterministic last-mile iMessage filter to the
 escalation handoff's exact `rico_<timestamp>_<digest>` request IDs, fixed tool

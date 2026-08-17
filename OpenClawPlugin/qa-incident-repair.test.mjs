@@ -4,9 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  authorizeIMessageAgentRun,
   authorizeOutboundSend,
   colleagueGroupSystemPrompt,
+  conversationThreadKeys,
   createApprovedTargetMemory,
+  createInboundUptimeLedger,
   isKnownColleagueGroup,
   isPublicSafeDeflection,
   isVipDirectContext,
@@ -48,6 +51,19 @@ const owner = {
   quietStart: 0,
   quietEnd: 0,
   directChatId: 570,
+};
+
+const al = {
+  target: "+15555550077",
+  kind: "individual",
+  access: "approved",
+  requireMention: true,
+  autoReply: true,
+  quietStart: 22,
+  quietEnd: 8,
+  displayName: "Al Sassoon",
+  vip: true,
+  directChatId: 77,
 };
 
 const janet = {
@@ -98,6 +114,18 @@ test("QA 1: unknown recipient is denied", () => {
   assert.deepEqual(authorizeOutboundSend({
     target: "+15555550999",
     policy: current,
+  }), { allow: false, reason: "no_inbound_this_uptime" });
+  const inboundUptime = createInboundUptimeLedger();
+  inboundUptime.rememberHumanInbound({
+    senderId: "+15555550999",
+    content: "hello",
+    messageId: "stranger-1",
+  }, { senderId: "+15555550999" });
+  assert.deepEqual(authorizeOutboundSend({
+    target: "+15555550999",
+    event: { to: "+15555550999" },
+    policy: current,
+    inboundUptime,
   }), { allow: false, reason: "stranger" });
   assert.equal(resolveOutboundIdentity(current, { to: "chat_id:404" }), undefined);
 });
@@ -106,36 +134,50 @@ test("QA 2: approved VIP is allowed with empty grants and a throwing policy read
   const current = policy([jeff, owner]);
   const memory = createApprovedTargetMemory();
   memory.rememberPolicy(current);
-  memory.rememberInbound({
+  const jeffInbound = {
     senderId: jeff.target,
     threadId: 9,
     sessionKey: JEFF_DEFAULT_DIRECT,
-  }, { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT });
+    content: "what is IMT seeing",
+    messageId: "jeff-live-1",
+  };
+  const jeffCtx = { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT };
+  memory.rememberInbound(jeffInbound, jeffCtx);
+  const inboundUptime = createInboundUptimeLedger();
+  assert.equal(inboundUptime.rememberHumanInbound(jeffInbound, jeffCtx), true);
 
   const emptyGrants = fs.mkdtempSync(path.join(os.tmpdir(), "rico-empty-grants-"));
   fs.chmodSync(emptyGrants, 0o700);
 
   const live = authorizeOutboundSend({
     target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: jeffCtx,
     policy: current,
     knownApproved: memory.values(),
+    inboundUptime,
   });
   assert.equal(live.allow, true, "live Jeff DM is chat_id=9 on default:direct");
 
   const policyThrew = authorizeOutboundSend({
     target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: jeffCtx,
     policy: undefined,
     policyError: true,
     knownApproved: memory.values(),
+    inboundUptime,
   });
   assert.equal(policyThrew.allow, true);
   assert.equal(policyThrew.reason, "approved_fail_open");
 
   const strangerAfterThrow = authorizeOutboundSend({
     target: "+15555550999",
+    event: { to: "+15555550999" },
     policy: undefined,
     policyError: true,
     knownApproved: memory.values(),
+    inboundUptime,
   });
   assert.equal(strangerAfterThrow.allow, false);
 
@@ -154,6 +196,9 @@ test("QA 4: VIP session model is Claude, not Qwen", () => {
   assert.equal(isVipDirectTurn({
     sessionKey: JEFF_DEFAULT_DIRECT,
   }, { senderId: jeff.target, channelId: "imessage" }, [jeff.target]), true);
+  assert.equal(isVipDirectTurn({
+    sessionKey: JEFF_DEFAULT_DIRECT,
+  }, { channelId: "imessage" }, [jeff.target]), false, "default:direct alone is not a VIP send");
   assert.equal(selectedModelIsLocalQwen({ model: "lmstudio/qwen/qwen3.6-35b-a3b" }), true);
   assert.notEqual(RICO_VIP_MODEL, "lmstudio/qwen/qwen3.6-35b-a3b");
   assert.match(RICO_VIP_MODEL, /claude-opus-4-8/u);
@@ -200,4 +245,159 @@ test("QA 6: Ana+Janet colleague group does not emit the public-safe ORIBE shrug"
     action: "cancel",
     reason: "public_safe_shrug",
   });
+});
+
+test("QA 7: gateway start / session resume / queued assistant cannot deliver with no inbound this uptime", () => {
+  const current = policy([jeff, owner, al]);
+  const empty = createInboundUptimeLedger();
+  const hello = "Hey Al, just checking in.";
+
+  assert.equal(prepareIMessageOutboundContent(hello).action, "deliver");
+  assert.deepEqual(conversationThreadKeys({
+    sessionKey: JEFF_DEFAULT_DIRECT,
+  }, {}), []);
+
+  for (const trigger of ["heartbeat", "cron", "session_resume", "resume", "gateway_start", "catchup"]) {
+    assert.deepEqual(authorizeIMessageAgentRun({
+      event: { sessionKey: "agent:rico-shared:imessage:direct:+15555550077", trigger },
+      ctx: { chatId: 77, trigger },
+      inboundUptime: empty,
+    }), { allow: false, reason: "unsolicited_trigger" });
+    assert.equal(authorizeOutboundSend({
+      target: "chat_id:77",
+      event: { to: "chat_id:77", sessionKey: "agent:rico-shared:imessage:direct:+15555550077" },
+      ctx: { chatId: 77, trigger },
+      policy: current,
+      inboundUptime: empty,
+    }).reason, "unsolicited_trigger");
+  }
+
+  assert.deepEqual(authorizeIMessageAgentRun({
+    event: { sessionKey: JEFF_DEFAULT_DIRECT, prompt: "queued assistant turn" },
+    ctx: { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT },
+    inboundUptime: empty,
+  }), { allow: false, reason: "no_inbound_this_uptime" });
+
+  const flushed = authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT, content: hello },
+    ctx: { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT },
+    policy: current,
+    inboundUptime: empty,
+  });
+  assert.equal(flushed.allow, false);
+  assert.equal(flushed.reason, "no_inbound_this_uptime");
+});
+
+test("QA 8: default:direct or a VIP flag cannot text Al with no inbound on that thread", () => {
+  const current = policy([jeff, owner, al]);
+  const inboundUptime = createInboundUptimeLedger();
+  inboundUptime.rememberHumanInbound({
+    senderId: owner.target,
+    threadId: 570,
+    sessionKey: JEFF_DEFAULT_DIRECT,
+    content: "you up?",
+    messageId: "alan-dm-1",
+  }, { chatId: 570, sessionKey: JEFF_DEFAULT_DIRECT, senderId: owner.target });
+
+  assert.equal(isVipDirectTurn({
+    sessionKey: JEFF_DEFAULT_DIRECT,
+  }, { channelId: "imessage" }, [al.target, jeff.target]), false);
+
+  const alFlush = authorizeOutboundSend({
+    target: "chat_id:77",
+    event: { to: "chat_id:77", sessionKey: JEFF_DEFAULT_DIRECT, content: "Hey Al" },
+    ctx: { chatId: 77, sessionKey: JEFF_DEFAULT_DIRECT },
+    policy: current,
+    inboundUptime,
+  });
+  assert.equal(alFlush.allow, false, "Al cannot be texted because he did not write");
+  assert.equal(alFlush.reason, "no_inbound_this_uptime");
+
+  const alNamed = authorizeOutboundSend({
+    target: al.target,
+    event: { to: al.target, sessionKey: "agent:rico-shared:imessage:direct:+15555550077" },
+    ctx: { chatId: 77 },
+    policy: current,
+    inboundUptime,
+  });
+  assert.equal(alNamed.allow, false);
+
+  const alanReply = authorizeOutboundSend({
+    target: "chat_id:570",
+    event: { to: "chat_id:570", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: { chatId: 570, sessionKey: JEFF_DEFAULT_DIRECT, senderId: owner.target },
+    policy: current,
+    inboundUptime,
+  });
+  assert.equal(alanReply.allow, true, "Alan owner DM still sends");
+});
+
+test("QA 9: Jeff, Al, and Alan still send when THEY write; last-mile banners still cancel", () => {
+  const current = policy([jeff, owner, al]);
+  const inboundUptime = createInboundUptimeLedger();
+  inboundUptime.rememberHumanInbound({
+    senderId: jeff.target,
+    threadId: 9,
+    sessionKey: JEFF_DEFAULT_DIRECT,
+    content: "status",
+    messageId: "jeff-2",
+  }, { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT, senderId: jeff.target });
+  inboundUptime.rememberHumanInbound({
+    senderId: al.target,
+    threadId: 77,
+    content: "hey rico",
+    messageId: "al-1",
+  }, { chatId: 77, senderId: al.target });
+  inboundUptime.rememberHumanInbound({
+    senderId: owner.target,
+    threadId: 570,
+    content: "ping",
+    messageId: "alan-2",
+  }, { chatId: 570, senderId: owner.target });
+
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT },
+    policy: current,
+    inboundUptime,
+  }).allow, true);
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:77",
+    event: { to: "chat_id:77" },
+    ctx: { chatId: 77 },
+    policy: current,
+    inboundUptime,
+  }).allow, true);
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:570",
+    event: { to: "chat_id:570" },
+    ctx: { chatId: 570 },
+    policy: current,
+    inboundUptime,
+  }).allow, true);
+
+  for (const banner of [FALLBACK_TIMEOUT, FALLBACK_UNAVAILABLE, GUARD_BLOCK, EMPTY_QWEN_TURN, PUBLIC_SAFE_ORIBE_SHRUG]) {
+    assert.equal(prepareIMessageOutboundContent(banner).action, "cancel", banner);
+  }
+});
+
+test("QA 10: stale replayed inbound from before this uptime does not authorize a send", () => {
+  const startedAt = Date.now();
+  const inboundUptime = createInboundUptimeLedger({ startedAt });
+  assert.equal(inboundUptime.rememberHumanInbound({
+    senderId: al.target,
+    threadId: 77,
+    content: "old hello",
+    messageId: "stale-al",
+    timestamp: startedAt - 60_000,
+  }, { chatId: 77 }), false);
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:77",
+    event: { to: "chat_id:77" },
+    ctx: { chatId: 77 },
+    policy: policy([al]),
+    inboundUptime,
+  }).allow, false);
 });

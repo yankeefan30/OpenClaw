@@ -6,11 +6,15 @@ directs.
 
 VIP identity is the union of:
 
-- recipient-guard identities with `vip: true` or `access: trusted`
+- recipient-guard identities with `access: approved` or `access: trusted`
 - the exact Jeff principal in the private ISTS grant, when that file is readable
 
-Studio binds those directs to the `rico-vip` agent. This plugin is defense in
-depth if a VIP session still lands on `rico-shared`.
+A VIP **sender handle** is required. Live `imessage:default:direct` is a shared
+session bucket, not a person. That session key alone must not pin Claude or
+treat the wrong live DM as a VIP turn.
+
+Do not create a `rico-vip` agent. This plugin is defense in depth if a VIP
+session still lands on `rico-shared`.
 
 Install:
 

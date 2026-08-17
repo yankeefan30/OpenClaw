@@ -6,8 +6,12 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
+  authorizeIMessageAgentRun,
+  authorizeOutboundSend,
   colleagueGroupSystemPrompt,
   consumeOwnerAuthorization,
+  conversationThreadKeys,
+  createInboundUptimeLedger,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -836,16 +840,62 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.8");
+  assert.equal(manifest.version, "0.5.9");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.8";/u);
+  assert.match(source, /const guardVersion = "0\.5\.9";/u);
   assert.match(source, /failing open for outbound iMessage/u);
+  assert.match(source, /inbound_required_this_uptime/u);
+  assert.match(source, /createInboundUptimeLedger/u);
+  assert.match(source, /authorizeOutboundSend/u);
   assert.match(source, /resolveOutboundIdentity/u);
   const replyPayloadHook = source.slice(source.indexOf('api.on("reply_payload_sending"'), source.indexOf('api.on("message_sending"'));
   const messageHook = source.slice(source.indexOf('api.on("message_sending"'));
   assert.match(replyPayloadHook, /disposition\.replacement \?\? RICO_GENERIC_RUNTIME_ERROR/u);
   assert.match(messageHook, /internalEscalationMetadataReason\(stripped\)/u);
   assert.match(messageHook, /RICO_ESCALATION_SAFE_REPLY/u);
+  assert.match(messageHook, /without inbound this uptime/u);
+  assert.match(replyPayloadHook, /authorizeIMessageAgentRun/u);
+  const promptHook = source.slice(source.indexOf('api.on("before_prompt_build"'), source.indexOf('api.on("before_agent_run"'));
+  const ingressHooks = source.slice(source.indexOf('api.on("inbound_claim"'), source.indexOf('api.on("before_prompt_build"'));
+  assert.doesNotMatch(promptHook, /rememberHumanInbound/u);
+  assert.match(ingressHooks, /rememberHumanInbound/u);
+});
+
+test("default:direct is not a thread and outbound requires inbound this uptime", () => {
+  assert.deepEqual(conversationThreadKeys({
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, {}), []);
+  assert.deepEqual(conversationThreadKeys({
+    senderId: "+18148814454",
+    threadId: 9,
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, { chatId: 9 }).sort(), ["chat_id:9", "direct:+18148814454"]);
+
+  const inboundUptime = createInboundUptimeLedger();
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    policy: policy([{
+      target: "+18148814454",
+      kind: "individual",
+      access: "approved",
+      requireMention: true,
+      autoReply: true,
+      quietStart: 0,
+      quietEnd: 0,
+      directChatId: 9,
+    }]),
+  }).reason, "no_inbound_this_uptime");
+  inboundUptime.rememberHumanInbound({
+    senderId: "+18148814454",
+    threadId: 9,
+    content: "hello",
+    messageId: "m1",
+  }, { chatId: 9 });
+  assert.equal(authorizeIMessageAgentRun({
+    event: { to: "chat_id:9" },
+    ctx: { chatId: 9 },
+    inboundUptime,
+  }).allow, true);
 });
 
 test("owner grants contain hashes and are consumed exactly once", () => {

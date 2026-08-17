@@ -48,10 +48,12 @@ export function isVipDirectTurn(event, ctx = {}, vipHandles = []) {
   const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
   const namedDirect = /:imessage:direct:/i.test(sessionKey);
   if (sessionKey.includes(":imessage:group:") && !defaultDirect) return false;
-  if (defaultDirect) return true;
+  // Live default:direct is a shared session bucket, not a person. A VIP
+  // sender handle is required; the session key alone must never pin Claude
+  // or treat the wrong live DM as a VIP turn.
   const handle = senderHandleFromContext(event, ctx);
   if (!handle || !vipHandles.includes(handle)) return false;
-  return namedDirect || String(ctx?.channelId ?? event?.channel ?? "").toLowerCase() === "imessage";
+  return namedDirect || defaultDirect || String(ctx?.channelId ?? event?.channel ?? "").toLowerCase() === "imessage";
 }
 
 export function selectedModelIsLocalQwen(event, ctx = {}) {

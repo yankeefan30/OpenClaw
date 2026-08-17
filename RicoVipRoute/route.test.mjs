@@ -49,6 +49,12 @@ test("only VIP directs request Claude; groups and strangers do not", () => {
     sessionKey: "agent:rico-shared:imessage:default:direct",
   }, { senderId: "+18148814454", channelId: "imessage" }, handles), true);
   assert.equal(isVipDirectTurn({
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, { channelId: "imessage" }, handles), false, "default:direct alone is not a VIP send");
+  assert.equal(isVipDirectTurn({
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, { senderId: "+15550000099", channelId: "imessage" }, handles), false);
+  assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:group:24",
   }, { senderId: "+18148814454", channelId: "imessage" }, handles), false);
   assert.equal(isVipDirectTurn({
