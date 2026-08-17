@@ -1854,7 +1854,7 @@ enum RicoVipWorkspace {
 /// reports it as applied.
 enum RicoNativePolicyProjection {
     static let requiredDMScope = "per-account-channel-peer"
-    static let requiredGuardVersion = "0.5.9"
+    static let requiredGuardVersion = "0.5.10"
     static let requiredGuardContract = "rico-recipient-guard/v6"
     static let recipientGuardPluginID = "rico-recipient-guard"
     static let vipRoutePluginID = "rico-vip-route"

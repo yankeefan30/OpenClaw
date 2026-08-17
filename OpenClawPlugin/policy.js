@@ -1248,13 +1248,100 @@ export function createInboundUptimeLedger({ startedAt = Date.now() } = {}) {
   };
 }
 
-export function authorizeIMessageAgentRun({ event = {}, ctx = {}, inboundUptime } = {}) {
+export const RICO_GENERAL_REPLIES_OPEN_FILE = "rico-general-replies.open.json";
+
+export function generalRepliesOpenPath(supportDirectory) {
+  return path.join(supportDirectory, RICO_GENERAL_REPLIES_OPEN_FILE);
+}
+
+export function readGeneralRepliesOpen({ supportDirectory, startedAt = Date.now() } = {}) {
+  if (!supportDirectory) return { open: false, reason: "bring_up_owner_only" };
+  try {
+    if (!isPrivatePath(supportDirectory, 0o700, "directory")) {
+      return { open: false, reason: "bring_up_owner_only" };
+    }
+    const file = generalRepliesOpenPath(supportDirectory);
+    if (!isPrivatePath(file, 0o600, "file")) return { open: false, reason: "bring_up_owner_only" };
+    const body = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (body?.schemaVersion !== 1 || body?.generalReplies !== "open") {
+      return { open: false, reason: "bring_up_owner_only" };
+    }
+    const openedAt = Number(body.openedAt);
+    if (!Number.isFinite(openedAt) || openedAt < startedAt) {
+      return { open: false, reason: "stale_bring_up_open", openedAt };
+    }
+    return { open: true, reason: "polar_opened_audience", openedAt };
+  } catch {
+    return { open: false, reason: "bring_up_owner_only" };
+  }
+}
+
+export function writeGeneralRepliesOpen({ supportDirectory, openedAt = Date.now() } = {}) {
+  if (!isPrivatePath(supportDirectory, 0o700, "directory")) {
+    throw new Error("Rico support directory is not private");
+  }
+  const file = generalRepliesOpenPath(supportDirectory);
+  fs.writeFileSync(file, `${JSON.stringify({
+    schemaVersion: 1,
+    generalReplies: "open",
+    openedAt,
+  })}\n`, { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return { open: true, openedAt, reason: "polar_opened_audience" };
+}
+
+export function generalRepliesOpenedThisUptime(bringUp = {}) {
+  if (bringUp.generalRepliesOpen === true) return true;
+  if (bringUp.generalRepliesOpen === false) return false;
+  return readGeneralRepliesOpen(bringUp).open === true;
+}
+
+export function isOwnerDirectIdentity(identity) {
+  return identity?.kind !== "group" && identity?.access === "owner";
+}
+
+export function authorizeBringUpAudience({
+  ownerDirect = false,
+  identity,
+  ownerTargets = [],
+  target,
+  bringUp = {},
+} = {}) {
+  const probe = normalize(target);
+  const listedOwner = probe && ownerTargets.map(normalize).includes(probe);
+  if (ownerDirect === true || isOwnerDirectIdentity(identity) || listedOwner) {
+    return { allow: true, reason: "owner_bring_up" };
+  }
+  if (generalRepliesOpenedThisUptime(bringUp)) {
+    return { allow: true, reason: "polar_opened_audience" };
+  }
+  return { allow: false, reason: "bring_up_owner_only" };
+}
+
+export function authorizeIMessageAgentRun({
+  event = {},
+  ctx = {},
+  inboundUptime,
+  ownerDirect = false,
+  identity,
+  ownerTargets = [],
+  target,
+  bringUp = {},
+} = {}) {
   if (isUnsolicitedOutboundTrigger(event, ctx)) {
     return { allow: false, reason: "unsolicited_trigger" };
   }
   if (!inboundUptimeAllows(inboundUptime, event, ctx)) {
     return { allow: false, reason: "no_inbound_this_uptime" };
   }
+  const audience = authorizeBringUpAudience({
+    ownerDirect,
+    identity,
+    ownerTargets,
+    target: target ?? event?.to ?? ctx?.to,
+    bringUp,
+  });
+  if (!audience.allow) return audience;
   return { allow: true, reason: "inbound_this_uptime" };
 }
 
@@ -1285,9 +1372,14 @@ export function isVipDirectContext(context) {
 
 export function createApprovedTargetMemory() {
   const targets = new Set();
+  const owners = new Set();
   const remember = (value) => {
     const normalized = normalize(value);
     if (normalized) targets.add(normalized);
+  };
+  const rememberOwner = (value) => {
+    const normalized = normalize(value);
+    if (normalized) owners.add(normalized);
   };
   return {
     remember,
@@ -1309,13 +1401,25 @@ export function createApprovedTargetMemory() {
         if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
           remember(`chat_id:${identity.directChatId}`);
         }
+        if (identity.kind !== "group" && identity.access === "owner") {
+          rememberOwner(identity.target);
+          if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+            rememberOwner(`chat_id:${identity.directChatId}`);
+          }
+        }
       }
     },
     has(value) {
       return targets.has(normalize(value));
     },
+    isOwnerTarget(value) {
+      return owners.has(normalize(value));
+    },
     values() {
       return [...targets];
+    },
+    ownerValues() {
+      return [...owners];
     },
   };
 }
@@ -1331,6 +1435,8 @@ export function authorizeOutboundSend({
   knownApproved = [],
   inboundUptime,
   trigger,
+  bringUp = {},
+  ownerTargets = [],
 } = {}) {
   const outboundEvent = { ...(event ?? {}) };
   if (outboundEvent.to == null && target != null) outboundEvent.to = target;
@@ -1361,15 +1467,22 @@ export function authorizeOutboundSend({
   }
   const probes = [...new Set([target, ...candidates].map((value) => normalize(value)).filter(Boolean))];
   for (const probe of probes) {
-    if (approved.has(probe)) {
-      return { allow: true, reason: policyError ? "approved_fail_open" : "approved_identity", target: probe };
-    }
-    if (policy) {
-      const identity = outboundIdentity(policy, probe);
-      if (identity && OUTBOUND_ACCESS.has(identity.access)) {
-        return { allow: true, reason: "approved_identity", target: probe, identity };
-      }
-    }
+    const identity = policy ? outboundIdentity(policy, probe) : undefined;
+    const privileged = approved.has(probe) || (identity && OUTBOUND_ACCESS.has(identity.access));
+    if (!privileged) continue;
+    const audience = authorizeBringUpAudience({
+      identity,
+      ownerTargets,
+      target: probe,
+      bringUp,
+    });
+    if (!audience.allow) return audience;
+    return {
+      allow: true,
+      reason: policyError ? "approved_fail_open" : "approved_identity",
+      target: probe,
+      ...(identity ? { identity } : {}),
+    };
   }
   return { allow: false, reason: "stranger" };
 }

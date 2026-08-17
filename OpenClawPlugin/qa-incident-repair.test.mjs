@@ -11,6 +11,8 @@ import {
   createApprovedTargetMemory,
   createInboundUptimeLedger,
   directHandleFromSessionKey,
+  readGeneralRepliesOpen,
+  writeGeneralRepliesOpen,
   isKnownColleagueGroup,
   isPublicSafeDeflection,
   isVipDirectContext,
@@ -103,6 +105,8 @@ const colleagueGroup = {
 const JEFF_DEFAULT_DIRECT = "agent:rico-shared:imessage:default:direct";
 const JEFF_LIVE_SESSION = `agent:rico-shared:imessage:default:direct:${jeff.target}`;
 const AL_LIVE_SESSION = `agent:rico-shared:imessage:default:direct:${al.target}`;
+const AL_SESSION_ID = "5106dfa8-8629-4316-bf66-f5080c7b1c0b";
+const POLAR_OPENED = { generalRepliesOpen: true };
 const FALLBACK_TIMEOUT =
   "Model Fallback: anthropic/claude-opus-4-8 (selected lmstudio/qwen/qwen3.6-35b-a3b; timeout)";
 const FALLBACK_UNAVAILABLE =
@@ -152,6 +156,15 @@ test("QA 2: approved VIP is allowed with empty grants and a throwing policy read
   const emptyGrants = fs.mkdtempSync(path.join(os.tmpdir(), "rico-empty-grants-"));
   fs.chmodSync(emptyGrants, 0o700);
 
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: jeffCtx,
+    policy: current,
+    knownApproved: memory.values(),
+    inboundUptime,
+  }).reason, "bring_up_owner_only", "VIP inbound is not a send during owner-only bring-up");
+
   const live = authorizeOutboundSend({
     target: "chat_id:9",
     event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
@@ -159,8 +172,9 @@ test("QA 2: approved VIP is allowed with empty grants and a throwing policy read
     policy: current,
     knownApproved: memory.values(),
     inboundUptime,
+    bringUp: POLAR_OPENED,
   });
-  assert.equal(live.allow, true, "live Jeff DM is chat_id=9 on default:direct");
+  assert.equal(live.allow, true, "live Jeff DM is chat_id=9 on default:direct after Polar opens");
 
   const policyThrew = authorizeOutboundSend({
     target: "chat_id:9",
@@ -170,6 +184,7 @@ test("QA 2: approved VIP is allowed with empty grants and a throwing policy read
     policyError: true,
     knownApproved: memory.values(),
     inboundUptime,
+    bringUp: POLAR_OPENED,
   });
   assert.equal(policyThrew.allow, true);
   assert.equal(policyThrew.reason, "approved_fail_open");
@@ -371,6 +386,14 @@ test("QA 9: Jeff, Al, and Alan still send when THEY write; last-mile banners sti
     ctx: { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT },
     policy: current,
     inboundUptime,
+  }).reason, "bring_up_owner_only");
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_DEFAULT_DIRECT },
+    ctx: { chatId: 9, sessionKey: JEFF_DEFAULT_DIRECT },
+    policy: current,
+    inboundUptime,
+    bringUp: POLAR_OPENED,
   }).allow, true);
   assert.equal(authorizeOutboundSend({
     target: "chat_id:77",
@@ -378,6 +401,7 @@ test("QA 9: Jeff, Al, and Alan still send when THEY write; last-mile banners sti
     ctx: { chatId: 77 },
     policy: current,
     inboundUptime,
+    bringUp: POLAR_OPENED,
   }).allow, true);
   assert.equal(authorizeOutboundSend({
     target: "chat_id:570",
@@ -385,7 +409,7 @@ test("QA 9: Jeff, Al, and Alan still send when THEY write; last-mile banners sti
     ctx: { chatId: 570 },
     policy: current,
     inboundUptime,
-  }).allow, true);
+  }).allow, true, "Alan owner DM sends during owner-only bring-up");
 
   for (const banner of [FALLBACK_TIMEOUT, FALLBACK_UNAVAILABLE, GUARD_BLOCK, EMPTY_QWEN_TURN, PUBLIC_SAFE_ORIBE_SHRUG]) {
     assert.equal(prepareIMessageOutboundContent(banner).action, "cancel", banner);
@@ -481,6 +505,14 @@ test("QA 11: newest live default:direct:<handle> that is not last4 4454 cannot s
     ctx: { chatId: 9, sessionKey: JEFF_LIVE_SESSION },
     policy: current,
     inboundUptime,
+  }).reason, "bring_up_owner_only");
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_LIVE_SESSION },
+    ctx: { chatId: 9, sessionKey: JEFF_LIVE_SESSION },
+    policy: current,
+    inboundUptime,
+    bringUp: POLAR_OPENED,
   }).allow, true);
   assert.equal(authorizeOutboundSend({
     target: al.target,
@@ -489,4 +521,77 @@ test("QA 11: newest live default:direct:<handle> that is not last4 4454 cannot s
     policy: current,
     inboundUptime,
   }).allow, false, "Jeff inbound does not authorize the other default:direct session");
+});
+
+test("QA 12: bring-up is owner-only; VIP inbound this uptime still does not send until Polar opens", () => {
+  const current = policy([jeff, owner, al]);
+  const startedAt = Date.now();
+  const inboundUptime = createInboundUptimeLedger({ startedAt });
+  const alInbound = {
+    senderId: al.target,
+    threadId: 77,
+    sessionKey: AL_LIVE_SESSION,
+    sessionId: AL_SESSION_ID,
+    content: "On the 1pm flight.",
+    messageId: "e7e97490-inbound",
+  };
+  assert.equal(inboundUptime.rememberHumanInbound(alInbound, {
+    chatId: 77,
+    sessionKey: AL_LIVE_SESSION,
+    sessionId: AL_SESSION_ID,
+    senderId: al.target,
+  }), true);
+
+  const alSend = {
+    target: "chat_id:77",
+    event: {
+      to: "chat_id:77",
+      sessionKey: AL_LIVE_SESSION,
+      sessionId: AL_SESSION_ID,
+      content: "Safe travels. I'll keep things running.",
+    },
+    ctx: { chatId: 77, sessionKey: AL_LIVE_SESSION, sessionId: AL_SESSION_ID },
+    policy: current,
+    inboundUptime,
+  };
+  assert.equal(authorizeOutboundSend(alSend).reason, "bring_up_owner_only");
+  assert.equal(authorizeIMessageAgentRun({
+    event: alSend.event,
+    ctx: alSend.ctx,
+    inboundUptime,
+  }).reason, "bring_up_owner_only");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rico-bring-up-"));
+  fs.chmodSync(root, 0o700);
+  writeGeneralRepliesOpen({ supportDirectory: root, openedAt: startedAt - 1 });
+  assert.equal(readGeneralRepliesOpen({ supportDirectory: root, startedAt }).open, false,
+    "an open file from before this LaunchAgent start stays owner-only");
+  assert.equal(authorizeOutboundSend({
+    ...alSend,
+    bringUp: { supportDirectory: root, startedAt },
+  }).reason, "bring_up_owner_only");
+
+  writeGeneralRepliesOpen({ supportDirectory: root, openedAt: startedAt + 1 });
+  assert.equal(readGeneralRepliesOpen({ supportDirectory: root, startedAt }).open, true);
+  assert.equal(authorizeOutboundSend({
+    ...alSend,
+    bringUp: { supportDirectory: root, startedAt },
+  }).allow, true, "after Polar opens this uptime, approved inbound may send");
+
+  inboundUptime.rememberHumanInbound({
+    senderId: owner.target,
+    threadId: 570,
+    content: "you up?",
+    messageId: "alan-bring-up",
+  }, { chatId: 570, senderId: owner.target });
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:570",
+    event: { to: "chat_id:570" },
+    ctx: { chatId: 570 },
+    policy: current,
+    inboundUptime,
+    bringUp: { supportDirectory: root, startedAt: startedAt + 10 },
+  }).allow, true, "Alan owner DM sends while general replies stay closed");
+
+  fs.rmSync(root, { recursive: true, force: true });
 });

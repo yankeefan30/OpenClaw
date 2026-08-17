@@ -20,24 +20,27 @@ Not a blast. 11 outbound from Alan’s line into **2 chats only**:
 
 Guard was present at 07:43:44 (20 plugins) and gone after 07:46:06 (19 plugins). Default model stayed Qwen.
 
-### Evening (8:45–8:51 ET) — Rico initiated
+### Evening (8:45–8:51 ET) — Rico went live to VIP on bring-up
 
-Worse than the morning. Polar brought the Gateway up only so Alan could send
-his own DM. Rico then texted people who had not written, including Al Sassoon
-(VIP). Polar took Rico down again (LaunchAgent disabled, 18789 down,
+Polar brought the Gateway up only so Alan could send his own DM. That is
+still a failure even when a VIP wrote.
+
+Proof (no phone numbers): Al Sassoon session `5106dfa8-8629-4316-bf66-f5080c7b1c0b`
+had inbound “On the 1pm flight.” Rico replied (assistant `e7e97490`) with a
+safe-travels / I’ll-keep-things-running line. Al then asked “I thought you
+were going?” — unanswered because Polar aborted. Polar will not send. Do
+not text Al.
+
+Live `rico-shared` sessions are keyed `imessage:default:direct:<handle>`
+(plus `group:24` / `group:33`). The newest session in that uptime was a
+default:direct that is **not** Jeff last4 4454. `isVipDirectTurn` used to
+return true for any default:direct, and gateway start could resume/flush
+existing sessions. Last-mile banner cancel does not stop a normal hello.
+
+Polar took Rico down again (LaunchAgent disabled, 18789 down,
 `intentional_offline` true). **Do not bring him back.**
 
-Root cause: guard 0.5.8 last-mile treated approved / VIP / owner identity as
-enough to deliver. Live `rico-shared` sessions are keyed
-`imessage:default:direct:<handle>` (plus `group:24` / `group:33`). During the
-8:45–8:51 ET uptime the newest session was a default:direct that is **not**
-Jeff last4 4454; Jeff was second. VIP inbox jsonl has only morning Jeff
-events — no Al inbound. `rico-vip-route/vip-directs.json` is missing and is
-not required. `isVipDirectTurn` used to return true for any default:direct,
-and gateway start could resume/flush that existing session. Last-mile banner
-cancel does not stop a normal-looking unsolicited hello.
-
-## What this repair changed (guard 0.5.9)
+## What this repair changed (guard 0.5.10)
 
 1. Rico never sends an iMessage unless that **exact thread** had a new human
    inbound during **this Gateway uptime**. Thread keys are chat id / handle.
@@ -46,15 +49,20 @@ cancel does not stop a normal-looking unsolicited hello.
 2. Gateway start, session resume, queued assistant flush, heartbeat, cron,
    and catch-up cannot deliver. A VIP flag, a session, or default:direct
    matching is not a send.
-3. Approved / VIP / owner still always send when **they** message. Fail open
-   for those people on a real inbound. Fail closed for strangers. No grants
-   required. No `rico-vip` agent. No session reset.
-4. Groups still need the existing mention / quiet rules.
-5. Last-mile still cancels Model Fallback / guard-block / empty-turn /
+3. **Bring-up / first-up is owner-only** until Polar opens general replies
+   for this uptime. LaunchAgent start does not open VIP/approved/group.
+   A VIP inbound (Al’s flight note) is not a send. Alan’s owner DM still
+   sends. Approved/VIP always-send applies only after Polar opens that
+   audience. A leftover open file from a previous uptime is ignored.
+4. After Polar opens: fail open for approved/VIP/owner on a real inbound.
+   Fail closed for strangers. No grants required. No `rico-vip` agent.
+   No session reset.
+5. Groups still need the existing mention / quiet rules.
+6. Last-mile still cancels Model Fallback / guard-block / empty-turn /
    public-safe shrugs.
-6. `default:direct` and `default:direct:<handle>` are not VIP Claude pins
+7. `default:direct` and `default:direct:<handle>` are not VIP Claude pins
    without a new inbound sender. Jeff `chat_id=9` last4 4454 still pins
-   Claude when Jeff writes.
+   Claude when Jeff writes, and only after Polar has opened general replies.
 
 ## Polar apply order (Mac Mini)
 
@@ -74,7 +82,7 @@ until Polar says.** Prove “no outbound without inbound” **before** Alan’s 
    openclaw config set plugins.entries.rico-recipient-guard.hooks.allowPromptInjection true
    ```
 
-   Confirm guard version **0.5.9**. Do **not** re-enable autonomy plugins.
+   Confirm guard version **0.5.10**. Do **not** re-enable autonomy plugins.
    Do **not** create a `rico-vip` agent. Do **not** reset sessions.
 
 3. **Set Jeff’s live chat id** (still down)
@@ -97,13 +105,15 @@ until Polar says.** Prove “no outbound without inbound” **before** Alan’s 
       inbound in this uptime.
    2. `default:direct` alone is treated as a VIP send.
    3. Al Sassoon (or any VIP) can be texted with no inbound on that thread.
+   4. A VIP inbound this uptime (Al session `5106dfa8-…`, “On the 1pm
+      flight.”) can send during owner-only bring-up.
 
    Also still true:
 
-   4. Unknown recipient denied.
-   5. Approved inbound still allowed: Jeff `chat_id=9` on `default:direct`,
-      Al if he writes, Alan owner DM. Empty grants / throwing policy read
-      fail open only on that real inbound.
+   5. Unknown recipient denied.
+   6. Alan owner DM still sends during bring-up. Jeff / Al send only after
+      Polar opens general replies for this uptime, and only with inbound
+      on that exact thread.
    6. Fallback / timeout / unavailable / guard-block / empty-turn /
       public-safe shrugs never delivered.
    7. VIP session model is Claude only when the sender is a VIP handle.
@@ -123,15 +133,28 @@ until Polar says.** Prove “no outbound without inbound” **before** Alan’s 
    ```
 
    If the Mini uses a different plist name, use that name. Confirm port
-   **18789** is listening only after this step. On bring-up, Rico must send
-   **zero** iMessages until a human writes.
+   **18789** is listening only after this step. On bring-up, Rico is
+   **owner-only**. Confirm `rico.recipient.status` shows
+   `bringUp.ownerOnly: true`. Rico must send **zero** iMessages to anyone
+   but Alan, even if a VIP writes.
 
 7. **Alan’s own DM first**, and only after Polar says. Expect no
    `Model Fallback:`, no guard-block banner, and no texts to anyone else.
-   Do not text Jeff, Al, Ana, Janet, or the group until that Alan DM is clean
-   and no unsolicited outbound occurred.
+   Do not text Jeff, Al, Ana, Janet, or the group. Polar will not send.
 
-8. **Abort** the same way as the incident: stop the Gateway, rename the plist
+8. **Polar opens general replies only after Alan’s DM is clean** and Polar
+   is ready for that audience:
+
+   ```bash
+   openclaw gateway call rico.recipient.openGeneralReplies
+   ```
+
+   Or write `rico-general-replies.open.json` (`0600`) with
+   `generalReplies: "open"` and `openedAt` after this Gateway start.
+   A file from the previous uptime does not count. Do not open the
+   audience in this apply unless Polar explicitly decides to.
+
+9. **Abort** the same way as the incident: stop the Gateway, rename the plist
    `.disabled`, confirm 18789 is down.
 
 ## Do not
@@ -143,4 +166,5 @@ until Polar says.** Prove “no outbound without inbound” **before** Alan’s 
 - Invent a wider blast
 - Create a `rico-vip` agent
 - Reset sessions
+- Text Al
 - Leave `rico-recipient-guard` disabled after a successful Alan DM test

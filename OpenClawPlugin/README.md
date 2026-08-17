@@ -62,12 +62,15 @@ resolution, but only an exact verified owner/group `before_tool_call` can mint
 that execution grant; owner-direct, non-owner, and unproved calls remain
 blocked.
 
-Guard 0.5.9 never delivers an iMessage unless that exact thread (chat id or
-handle, never `default:direct`) had a new human inbound during this Gateway
-uptime. Gateway start, session resume, queued assistant flush, heartbeat,
-cron, and catch-up cannot send. Approved / VIP / owner still fail open when
-they write. Last-mile still cancels Model Fallback / guard-block / empty-turn
-/ public-safe shrugs.
+Guard 0.5.10 never delivers an iMessage unless that exact thread (chat id or
+handle, never bare `default:direct`) had a new human inbound during this
+Gateway uptime. Bring-up is owner-only until Polar opens general replies
+for this uptime (`rico.recipient.openGeneralReplies` or a fresh
+`rico-general-replies.open.json`). LaunchAgent start does not open
+VIP/approved/group. Gateway start, session resume, queued assistant flush,
+heartbeat, cron, and catch-up cannot send. After Polar opens, approved /
+VIP / owner fail open when they write. Last-mile still cancels Model
+Fallback / guard-block / empty-turn / public-safe shrugs.
 
 Guard 0.5.8 also applies a deterministic last-mile iMessage filter to the
 escalation handoff's exact `rico_<timestamp>_<digest>` request IDs, fixed tool

@@ -846,9 +846,11 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.9");
+  assert.equal(manifest.version, "0.5.10");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.9";/u);
+  assert.match(source, /const guardVersion = "0\.5\.10";/u);
+  assert.match(source, /rico\.recipient\.openGeneralReplies/u);
+  assert.match(source, /bring_up_owner_only/u);
   assert.match(source, /failing open for outbound iMessage/u);
   assert.match(source, /inbound_required_this_uptime/u);
   assert.match(source, /createInboundUptimeLedger/u);
@@ -907,6 +909,12 @@ test("default:direct is not a thread and outbound requires inbound this uptime",
     event: { to: "chat_id:9" },
     ctx: { chatId: 9 },
     inboundUptime,
+  }).reason, "bring_up_owner_only");
+  assert.equal(authorizeIMessageAgentRun({
+    event: { to: "chat_id:9" },
+    ctx: { chatId: 9 },
+    inboundUptime,
+    bringUp: { generalRepliesOpen: true },
   }).allow, true);
 });
 
