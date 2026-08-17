@@ -20,7 +20,7 @@ import {
   RICO_SHARED_AGENT_ID,
   RICO_SHARED_WORKSPACE,
 } from "./escalation-guard.js";
-import { sharedAudienceSystemPrompt } from "./policy.js";
+import { approvedDirectSystemPrompt, colleagueGroupSystemPrompt, sharedAudienceSystemPrompt } from "./policy.js";
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
@@ -130,9 +130,14 @@ test("shared prompt gives the fixed stuck-question handoff without granting gene
   assert.match(section, /Rico remains the speaker/u);
   assert.match(section, /Never reveal or mention the request ID, research bench, internal handoff, files, paths/u);
 
-  const prompt = sharedAudienceSystemPrompt(context);
+  const prompt = approvedDirectSystemPrompt(context);
   assert.match(prompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
-  assert.match(prompt, /No other tools or external actions are available/u);
+  assert.match(prompt, /private one-to-one conversation/u);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
+  const groupPrompt = colleagueGroupSystemPrompt({ ...context, conversationType: "group", groupTarget: "chat_id:42" });
+  assert.match(groupPrompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
+  assert.match(groupPrompt, /known colleague group/u);
+  assert.doesNotMatch(groupPrompt, /deliberately isolated public conversation context/u);
   assert.doesNotMatch(prompt, /rico_group_email_execute/u);
   assert.doesNotMatch(prompt, /\b(?:exec|apply_patch|read_file|write_file|web_search|browser)\b/u);
 
@@ -266,8 +271,9 @@ test("guard integration attests only after shared prompt and session checks and 
   const root = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(root, "index.js"), "utf8");
   const hook = source.slice(source.indexOf('api.on("before_agent_run"'), source.indexOf('api.on("before_tool_call"'));
+  assert.match(hook, /approvedDirect/u);
   assert.ok(hook.indexOf("senderContexts.promptUnchanged") < hook.indexOf("sessionAttestations.verifyOrAttest"));
-  assert.ok(hook.indexOf("sessionAttestations.verifyOrAttest") < hook.indexOf("sharedEscalationProofs.attest"));
+  assert.ok(hook.indexOf("sessionAttestations.verifyOrAttest") < hook.indexOf('category: "escalation_context_required"'));
   assert.match(hook, /category: "escalation_context_required"/u);
 
   const toolHook = source.slice(source.indexOf('api.on("before_tool_call"'), source.indexOf('api.on("agent_end"'));

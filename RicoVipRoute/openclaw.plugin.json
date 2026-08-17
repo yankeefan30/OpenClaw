@@ -1,0 +1,9 @@
+{
+  "id": "rico-vip-route",
+  "name": "Rico VIP Route",
+  "description": "Start VIP and owner iMessage directs on Claude. Groups keep the shared local route.",
+  "version": "0.1.0",
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "activation": { "onStartup": true },
+  "contracts": { "hooks": ["before_agent_run"] }
+}

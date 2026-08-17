@@ -72,11 +72,11 @@ removed with visible `operator.admin` review.
 Contacts resolve display names to exact phone numbers or email addresses;
 display names are never authentication. Individual and group policies are
 stored privately and mirrored into OpenClaw's native iMessage allowlists. The
-Rico guard fails closed for unknown senders, unknown group participants,
-missing `@rico` mentions, disabled auto-replies, quiet hours, and emergency
-pause. Owner-initiated sends require an explicit draft review and use an
-atomic, single-use, two-minute grant containing a SHA-256 message digest rather
-than message plaintext.
+Rico guard fails closed for unknown senders. Approved, trusted, owner, and
+already-allowlisted people always send. Quiet hours and missing grants do not
+drop those sends. Owner-initiated Studio drafts may still write a short-lived
+grant containing a SHA-256 message digest rather than message plaintext; the
+grant is never required for an already-approved recipient.
 
 Messages sent from the Mac's own Apple identity are normally discarded by
 OpenClaw as reflected `from me` traffic. The bundled owner-command route admits
@@ -155,6 +155,7 @@ auto-send LaunchAgent.
 ```sh
 swift test --disable-sandbox
 (cd OpenClawPlugin && npm test)
+(cd RicoVipRoute && npm test)
 node --test IMsgOwnerRoute/imsg-owner-route.test.mjs
 (cd AutonomyGovernorPlugin && npm test && npm run check)
 (cd RicoEmailGovernance && npm run check && npm test)

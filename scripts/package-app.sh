@@ -68,6 +68,7 @@ cp "$project_root/OpenClawPlugin/index.js" \
    "$project_root/OpenClawPlugin/skills-context.js" \
    "$project_root/OpenClawPlugin/people-context.js" \
    "$project_root/OpenClawPlugin/research-policy.js" \
+   "$project_root/OpenClawPlugin/vip-route.js" \
    "$project_root/OpenClawPlugin/openclaw.plugin.json" \
    "$project_root/OpenClawPlugin/package.json" \
    "$project_root/OpenClawPlugin/README.md" \
@@ -159,6 +160,13 @@ cp "$project_root/IMsgOwnerRoute/imsg-owner-route.mjs" \
    "$project_root/IMsgOwnerRoute/README.md" \
    "$contents_path/Resources/RicoOwnerRoute/"
 chmod 755 "$contents_path/Resources/RicoOwnerRoute/imsg-owner-route.mjs"
+mkdir -p "$contents_path/Resources/RicoVipRoute"
+cp "$project_root/RicoVipRoute/index.js" \
+   "$project_root/RicoVipRoute/openclaw.plugin.json" \
+   "$project_root/RicoVipRoute/package.json" \
+   "$project_root/RicoVipRoute/README.md" \
+   "$project_root/OpenClawPlugin/vip-route.js" \
+   "$contents_path/Resources/RicoVipRoute/"
 mkdir -p "$contents_path/Resources/JanetReceiptWorkflow/scripts"
 cp "$project_root/JanetReceiptWorkflow/index.js" \
    "$project_root/JanetReceiptWorkflow/definition.mjs" \

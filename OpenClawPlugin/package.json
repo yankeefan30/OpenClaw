@@ -1,9 +1,9 @@
 {
   "name": "openclaw-plugin-rico-recipient-guard",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "type": "module",
   "private": true,
-  "scripts": { "test": "node --test policy.test.mjs escalation-guard.test.mjs automatic-imt-handoff.test.mjs group-email-integration.test.mjs people-context.test.mjs research-policy.test.mjs ists-incident-integration.test.mjs skills-context.test.mjs" },
+  "scripts": { "test": "node --test policy.test.mjs qa-incident-repair.test.mjs escalation-guard.test.mjs automatic-imt-handoff.test.mjs group-email-integration.test.mjs people-context.test.mjs research-policy.test.mjs ists-incident-integration.test.mjs skills-context.test.mjs" },
   "peerDependencies": { "openclaw": ">=2026.7.1" },
   "openclaw": { "extensions": ["./index.js"] }
 }

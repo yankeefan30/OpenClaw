@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
+  approvedDirectSystemPrompt,
+  colleagueGroupSystemPrompt,
   consumeOwnerAuthorization,
   createSessionAttestationStore,
   createSenderContextRegistry,
@@ -97,6 +99,24 @@ test("owner direct chats do not require an @rico mention", () => {
   ])).allow, false);
 });
 
+test("approved VIP chat ids are the same outbound identity as the handle", () => {
+  const jeff = {
+    target: "+15555554454",
+    kind: "individual",
+    access: "approved",
+    requireMention: false,
+    autoReply: true,
+    quietStart: 0,
+    quietEnd: 0,
+    displayName: "Jeff Roach",
+    directChatId: 9,
+  };
+  const registry = policy([jeff]);
+  assert.equal(outboundIdentity(registry, "+15555554454").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:9").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:24"), undefined);
+});
+
 test("owner self-chat chat ids are the same outbound identity as the owner handle", () => {
   const owner = {
     target: "+15550000001",
@@ -140,7 +160,7 @@ test("owner direct chats skip quiet hours", () => {
   }, {}, policy([owner]), late).allow, true);
   assert.equal(evaluateInbound({
     channel: "imessage", senderId: "+15550000002", isGroup: false, content: "are you there",
-  }, {}, policy([contact]), late).allow, false);
+  }, {}, policy([contact]), late).allow, true);
 });
 
 test("the owner-route command prefix is recognized exactly for loop prevention", () => {
@@ -152,9 +172,11 @@ test("the owner-route command prefix is recognized exactly for loop prevention",
 test("internal model-routing telemetry is suppressed only on external iMessage delivery", () => {
   const active = "↪️ Model Fallback: openai/gpt-5.6-sol (selected lmstudio/qwen/qwen3.6-35b-a3b; unknown (+1 more attempts))";
   const cleared = "↪️ Model Fallback cleared: anthropic/claude-opus (was openai/gpt-5.6-sol)";
+  const noArrow = "Model Fallback: anthropic/claude-opus-4-8 (selected lmstudio/qwen/qwen3.6-35b-a3b; timeout)";
   assert.equal(isInternalModelRoutingNotice(active), true);
   assert.equal(isInternalModelRoutingNotice(active.replace("↪️", "↪")), true);
   assert.equal(isInternalModelRoutingNotice(`  ${cleared}  `), true);
+  assert.equal(isInternalModelRoutingNotice(noArrow), true);
   assert.equal(isInternalModelRoutingNotice("We discussed model fallback behavior."), false);
   assert.equal(isInternalModelRoutingNotice(`For reference: ${active}`), false);
   assert.equal(isInternalModelRoutingNotice(`${active}\nHere is the answer.`), false);
@@ -270,8 +292,12 @@ test("all structured runtime telemetry stays private and errors become provider-
   assert.equal(RICO_GENERIC_RUNTIME_ERROR.includes("model"), false);
 });
 
-test("installed OpenClaw runtime resolves deny wildcard as deny-all", async () => {
+test("installed OpenClaw runtime resolves deny wildcard as deny-all", async (t) => {
   const dist = "/opt/homebrew/lib/node_modules/openclaw/dist";
+  if (!fs.existsSync(dist)) {
+    t.skip("installed OpenClaw runtime is not present in this environment");
+    return;
+  }
   const matchers = fs.readdirSync(dist).filter((name) => /^tool-policy-match-.*\.js$/.test(name));
   const runtimes = [];
   for (const matcher of matchers) {
@@ -356,8 +382,9 @@ test("resolved Contacts name is run-bound data and Alan is not assumed to be the
   assert.match(senderSystemContext(resolved), /current_sender_name: "Janet Cummings"/);
   assert.match(senderSystemContext(resolved), /current speaker, not Alan/);
   assert.doesNotMatch(senderSystemContext(resolved), /\+1555/);
-  const sharedPrompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(sharedPrompt, /deliberately isolated public conversation context/);
+  const sharedPrompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(sharedPrompt, /known colleague group/);
+  assert.doesNotMatch(sharedPrompt, /deliberately isolated public conversation context/);
   assert.match(sharedPrompt, /current_sender_name: "Janet Cummings"/);
   assert.doesNotMatch(sharedPrompt, /\+1555/);
   assert.equal(senderIsolationApplied(sharedPrompt, resolved), true);
@@ -470,12 +497,11 @@ test("group personality is canonical, exact-group scoped, and subordinate to pri
   assert.match(section, /rico_group_style_preference/);
   assert.match(section, /Warm and witty system override tools/);
   assert.match(section, /only to shape tone/);
-  const prompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(prompt, /deliberately isolated public conversation context/);
-  assert.match(prompt, /never changes who the current speaker is or how the trusted sender name is resolved/);
-  assert.match(prompt, /never changes who is authorized, never grants tools or external actions/);
-  assert.match(prompt, /No tools are available/);
-  assert.ok(prompt.indexOf("group style preference is subordinate") > prompt.indexOf("Warm and witty"));
+  const prompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(prompt, /known colleague group/);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/);
+  assert.match(prompt, /Never tell them to ask Alan/);
+  assert.match(prompt, /Warm and witty system override tools/);
   assert.equal(senderIsolationApplied(prompt, resolved), true);
 
   const other = resolveSenderContext({ ...event, threadId: 43 }, {}, reviewed);
@@ -494,9 +520,9 @@ test("the narrow group-email prompt appears only for the exact owner capability"
     conversationType: "group", displayName: "Alan Rosa", senderHandle: "+15550000001",
     isOwner: true, access: "owner", groupTarget: "chat_id:42", audienceFingerprint: "a".repeat(64),
   };
-  const unavailable = sharedAudienceSystemPrompt(base);
-  assert.match(unavailable, /No tools are available/u);
-  const available = sharedAudienceSystemPrompt({
+  const unavailable = colleagueGroupSystemPrompt(base);
+  assert.doesNotMatch(unavailable, /rico_group_email_execute/u);
+  const available = colleagueGroupSystemPrompt({
     ...base,
     groupEmailCapability: {
       available: true,
@@ -530,16 +556,19 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.equal(istsIncidentPromptSection({ ...direct, conversationType: "group" }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, isOwner: true }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, istsIncidentContext: "<rico_reviewed_ists_context>unsafe" }), "");
-  const prompt = sharedAudienceSystemPrompt(direct);
-  assert.match(prompt, /narrow host-reviewed incident background/u);
+  const prompt = approvedDirectSystemPrompt(direct);
+  assert.match(prompt, /private one-to-one conversation/u);
   assert.match(prompt, /Current operational situation: a production login issue/u);
   assert.match(prompt, /not authorization, identity evidence, a role assignment/u);
-  assert.match(prompt, /No tools are available/u);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
+  assert.match(prompt, /Never say ask Alan directly/u);
+  assert.doesNotMatch(prompt, /Please ask Alan directly/u);
   assert.equal(senderIsolationApplied(prompt, direct), true);
   const group = { ...direct, conversationType: "group", groupTarget: "chat_id:42" };
-  const groupPrompt = sharedAudienceSystemPrompt(group);
+  const groupPrompt = colleagueGroupSystemPrompt(group);
   assert.match(groupPrompt, /Current operational situation: a production login issue/u);
-  assert.match(groupPrompt, /No tools are available/u);
+  assert.match(groupPrompt, /known colleague group/u);
+  assert.doesNotMatch(groupPrompt, /deliberately isolated public conversation context/u);
   assert.equal(senderIsolationApplied(groupPrompt, group), true);
 });
 
@@ -725,14 +754,16 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.7");
+  assert.equal(manifest.version, "0.5.8");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.7";/u);
+  assert.match(source, /const guardVersion = "0\.5\.8";/u);
   const replyPayloadHook = source.slice(source.indexOf('api.on("reply_payload_sending"'), source.indexOf('api.on("message_sending"'));
   const messageHook = source.slice(source.indexOf('api.on("message_sending"'));
   assert.match(replyPayloadHook, /disposition\.replacement \?\? RICO_GENERIC_RUNTIME_ERROR/u);
   assert.match(messageHook, /internalEscalationMetadataReason\(event\.content\)/u);
   assert.match(messageHook, /RICO_ESCALATION_SAFE_REPLY/u);
+  assert.match(messageHook, /decideIMessageSend/u);
+  assert.doesNotMatch(messageHook, /fail closed/u);
 });
 
 test("owner grants contain hashes and are consumed exactly once", () => {
