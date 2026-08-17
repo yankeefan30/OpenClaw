@@ -1,6 +1,8 @@
 import os from "node:os";
 import path from "node:path";
 import {
+  hasHumanInboundEvidence,
+  isUnsolicitedOutboundTrigger,
   isVipDirectIdentity,
   normalize,
   readIstsVipHandles,
@@ -37,10 +39,10 @@ export function loadVipHandles({ policyPath, directory } = {}) {
 }
 
 export function senderHandleFromContext(event, ctx = {}) {
-  const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
-  const direct = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  const raw = ctx?.senderId ?? event?.senderId ?? (direct && direct[1] !== "default" ? direct[1] : undefined);
-  return normalize(raw);
+  // Session keys are not inbound. Live rico-shared keys look like
+  // `imessage:default:direct:<handle>`; that suffix names the thread, it
+  // does not prove the person just wrote.
+  return normalize(ctx?.senderId ?? event?.senderId);
 }
 
 export function isVipDirectTurn(event, ctx = {}, vipHandles = []) {
@@ -48,11 +50,12 @@ export function isVipDirectTurn(event, ctx = {}, vipHandles = []) {
   const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
   const namedDirect = /:imessage:direct:/i.test(sessionKey);
   if (sessionKey.includes(":imessage:group:") && !defaultDirect) return false;
-  // Live default:direct is a shared session bucket, not a person. A VIP
-  // sender handle is required; the session key alone must never pin Claude
-  // or treat the wrong live DM as a VIP turn.
+  if (isUnsolicitedOutboundTrigger(event, ctx)) return false;
   const handle = senderHandleFromContext(event, ctx);
   if (!handle || !vipHandles.includes(handle)) return false;
+  // A default:direct session, including default:direct:<handle>, is not a
+  // VIP send. Claude pins only when this turn has a new human inbound.
+  if (!hasHumanInboundEvidence(event, ctx)) return false;
   return namedDirect || defaultDirect || String(ctx?.channelId ?? event?.channel ?? "").toLowerCase() === "imessage";
 }
 

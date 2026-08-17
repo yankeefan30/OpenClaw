@@ -9,9 +9,10 @@ VIP identity is the union of:
 - recipient-guard identities with `access: approved` or `access: trusted`
 - the exact Jeff principal in the private ISTS grant, when that file is readable
 
-A VIP **sender handle** is required. Live `imessage:default:direct` is a shared
-session bucket, not a person. That session key alone must not pin Claude or
-treat the wrong live DM as a VIP turn.
+A VIP **sender handle from this inbound** is required. Live rico-shared keys
+are `imessage:default:direct:<handle>`. That suffix names the thread; it is
+not inbound and must not pin Claude. `rico-vip-route/vip-directs.json` is
+not required and may be missing.
 
 Do not create a `rico-vip` agent. This plugin is defense in depth if a VIP
 session still lands on `rico-shared`.

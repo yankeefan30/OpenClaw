@@ -1059,6 +1059,24 @@ function addOutboundCandidate(set, value) {
 }
 
 /**
+ * Live rico-shared keys are `imessage:default:direct:<handle>` plus
+ * `imessage:direct:<handle>` and `imessage:group:<id>`. The handle identifies
+ * the thread. It is not inbound and not a VIP send.
+ */
+export function directHandleFromSessionKey(sessionKey) {
+  const raw = String(sessionKey ?? "");
+  const defaultDirect = raw.match(/:imessage:default:direct:([^:]+)(?:$|:)/i);
+  if (defaultDirect && defaultDirect[1].toLowerCase() !== "default") {
+    return validSenderHandle(defaultDirect[1]);
+  }
+  const named = raw.match(/:imessage:direct:([^:]+)(?:$|:)/i);
+  if (named && named[1].toLowerCase() !== "default") {
+    return validSenderHandle(named[1]);
+  }
+  return "";
+}
+
+/**
  * `--deliver` and some Gateway send paths put the peer in session metadata,
  * a numeric chat id, or a field other than `event.to`. Collect every
  * authenticated candidate so an already-approved identity is not treated as
@@ -1081,8 +1099,8 @@ export function outboundTargetCandidates(event, ctx = {}) {
     addOutboundCandidate(values, metadata[key]);
   }
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
-  const direct = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  if (direct) addOutboundCandidate(values, direct[1]);
+  const directHandle = directHandleFromSessionKey(sessionKey);
+  if (directHandle) addOutboundCandidate(values, directHandle);
   const group = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
   if (group) addOutboundCandidate(values, /^\d+$/.test(group[1]) ? `chat_id:${group[1]}` : group[1]);
   return [...values];
@@ -1142,7 +1160,8 @@ function inboundTimestampMs(event, ctx = {}) {
 
 /**
  * Exact conversation keys for the inbound-this-uptime rule.
- * `imessage:default:direct` is a shared session bucket, never a thread.
+ * Bare `imessage:default:direct` is not a thread. Live
+ * `imessage:default:direct:<handle>` is that handle's thread only.
  */
 export function conversationThreadKeys(event, ctx = {}) {
   const keys = new Set();
@@ -1175,11 +1194,8 @@ export function conversationThreadKeys(event, ctx = {}) {
   addDirect(ctx?.to);
 
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
-  const namedDirect = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  if (namedDirect && namedDirect[1].toLowerCase() !== "default") {
-    addDirect(namedDirect[1]);
-    addChat(namedDirect[1]);
-  }
+  const sessionHandle = directHandleFromSessionKey(sessionKey);
+  if (sessionHandle) addDirect(sessionHandle);
   const group = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
   if (group && !/:imessage:default:direct/i.test(sessionKey)) {
     addChat(/^\d+$/.test(group[1]) ? `chat_id:${group[1]}` : group[1]);

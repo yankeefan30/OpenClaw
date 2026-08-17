@@ -10,6 +10,7 @@ import {
   conversationThreadKeys,
   createApprovedTargetMemory,
   createInboundUptimeLedger,
+  directHandleFromSessionKey,
   isKnownColleagueGroup,
   isPublicSafeDeflection,
   isVipDirectContext,
@@ -100,6 +101,8 @@ const colleagueGroup = {
 };
 
 const JEFF_DEFAULT_DIRECT = "agent:rico-shared:imessage:default:direct";
+const JEFF_LIVE_SESSION = `agent:rico-shared:imessage:default:direct:${jeff.target}`;
+const AL_LIVE_SESSION = `agent:rico-shared:imessage:default:direct:${al.target}`;
 const FALLBACK_TIMEOUT =
   "Model Fallback: anthropic/claude-opus-4-8 (selected lmstudio/qwen/qwen3.6-35b-a3b; timeout)";
 const FALLBACK_UNAVAILABLE =
@@ -194,11 +197,17 @@ test("QA 3: model-fallback, unavailable, timeout, and guard-block lines never de
 
 test("QA 4: VIP session model is Claude, not Qwen", () => {
   assert.equal(isVipDirectTurn({
-    sessionKey: JEFF_DEFAULT_DIRECT,
-  }, { senderId: jeff.target, channelId: "imessage" }, [jeff.target]), true);
+    sessionKey: JEFF_LIVE_SESSION,
+    senderId: jeff.target,
+    content: "status",
+    messageId: "jeff-qa4",
+  }, { senderId: jeff.target, channelId: "imessage", messageId: "jeff-qa4" }, [jeff.target]), true);
   assert.equal(isVipDirectTurn({
     sessionKey: JEFF_DEFAULT_DIRECT,
   }, { channelId: "imessage" }, [jeff.target]), false, "default:direct alone is not a VIP send");
+  assert.equal(isVipDirectTurn({
+    sessionKey: AL_LIVE_SESSION,
+  }, { channelId: "imessage" }, [al.target, jeff.target]), false);
   assert.equal(selectedModelIsLocalQwen({ model: "lmstudio/qwen/qwen3.6-35b-a3b" }), true);
   assert.notEqual(RICO_VIP_MODEL, "lmstudio/qwen/qwen3.6-35b-a3b");
   assert.match(RICO_VIP_MODEL, /claude-opus-4-8/u);
@@ -400,4 +409,84 @@ test("QA 10: stale replayed inbound from before this uptime does not authorize a
     policy: policy([al]),
     inboundUptime,
   }).allow, false);
+});
+
+test("QA 11: newest live default:direct:<handle> that is not last4 4454 cannot send without inbound", () => {
+  assert.match(JEFF_LIVE_SESSION, /4454$/u);
+  assert.doesNotMatch(AL_LIVE_SESSION, /4454$/u);
+  assert.equal(directHandleFromSessionKey(AL_LIVE_SESSION), al.target);
+  assert.equal(directHandleFromSessionKey(JEFF_DEFAULT_DIRECT), "");
+
+  const current = policy([jeff, owner, al]);
+  const inboundUptime = createInboundUptimeLedger();
+  assert.equal(inboundUptime.rememberHumanInbound({
+    senderId: jeff.target,
+    threadId: 9,
+    sessionKey: JEFF_LIVE_SESSION,
+    content: "morning VIP inbox only",
+    messageId: "jeff-morning-z",
+    timestamp: Date.now() - 8 * 60 * 60 * 1000,
+  }, { chatId: 9, sessionKey: JEFF_LIVE_SESSION }), false, "morning Jeff events are not this uptime");
+
+  assert.equal(isVipDirectTurn({ sessionKey: AL_LIVE_SESSION }, { channelId: "imessage" }, [al.target, jeff.target]), false);
+  assert.equal(isVipDirectTurn({
+    sessionKey: AL_LIVE_SESSION,
+    senderId: al.target,
+  }, { senderId: al.target, channelId: "imessage" }, [al.target]), false);
+  assert.equal(isVipDirectTurn({
+    sessionKey: AL_LIVE_SESSION,
+    senderId: al.target,
+    trigger: "session_resume",
+    content: "queued assistant",
+    messageId: "resume-1",
+  }, { senderId: al.target, trigger: "session_resume" }, [al.target]), false);
+
+  const newest = { sessionKey: AL_LIVE_SESSION, to: al.target, content: "Hey" };
+  assert.deepEqual(conversationThreadKeys(newest, { sessionKey: AL_LIVE_SESSION }), [`direct:${al.target}`]);
+  assert.equal(authorizeIMessageAgentRun({
+    event: newest,
+    ctx: { sessionKey: AL_LIVE_SESSION },
+    inboundUptime,
+  }).reason, "no_inbound_this_uptime");
+  assert.equal(authorizeIMessageAgentRun({
+    event: newest,
+    ctx: { sessionKey: AL_LIVE_SESSION, trigger: "session_resume" },
+    inboundUptime,
+  }).reason, "unsolicited_trigger");
+  assert.equal(authorizeOutboundSend({
+    target: al.target,
+    event: newest,
+    ctx: { sessionKey: AL_LIVE_SESSION },
+    policy: current,
+    inboundUptime,
+  }).allow, false);
+  assert.equal(authorizeOutboundSend({
+    target: al.target,
+    event: { sessionKey: AL_LIVE_SESSION, content: "queued assistant" },
+    ctx: { sessionKey: AL_LIVE_SESSION, trigger: "gateway_start" },
+    policy: current,
+    inboundUptime,
+  }).reason, "unsolicited_trigger");
+
+  inboundUptime.rememberHumanInbound({
+    senderId: jeff.target,
+    threadId: 9,
+    sessionKey: JEFF_LIVE_SESSION,
+    content: "status",
+    messageId: "jeff-now",
+  }, { chatId: 9, sessionKey: JEFF_LIVE_SESSION, senderId: jeff.target });
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:9",
+    event: { to: "chat_id:9", sessionKey: JEFF_LIVE_SESSION },
+    ctx: { chatId: 9, sessionKey: JEFF_LIVE_SESSION },
+    policy: current,
+    inboundUptime,
+  }).allow, true);
+  assert.equal(authorizeOutboundSend({
+    target: al.target,
+    event: newest,
+    ctx: { sessionKey: AL_LIVE_SESSION },
+    policy: current,
+    inboundUptime,
+  }).allow, false, "Jeff inbound does not authorize the other default:direct session");
 });

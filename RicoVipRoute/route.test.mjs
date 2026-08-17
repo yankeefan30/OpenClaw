@@ -42,25 +42,44 @@ test("VIP handles come from approved/trusted identities; no vip flag required", 
 
 test("only VIP directs request Claude; groups and strangers do not", () => {
   const handles = ["+18148814454"];
+  const jeffInbound = { senderId: "+18148814454", content: "status", messageId: "jeff-1" };
+  const jeffCtx = { senderId: "+18148814454", channelId: "imessage", messageId: "jeff-1" };
   assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:direct:+18148814454",
-  }, { senderId: "+18148814454", channelId: "imessage" }, handles), true);
+    ...jeffInbound,
+  }, jeffCtx, handles), true);
   assert.equal(isVipDirectTurn({
-    sessionKey: "agent:rico-shared:imessage:default:direct",
-  }, { senderId: "+18148814454", channelId: "imessage" }, handles), true);
+    sessionKey: "agent:rico-shared:imessage:default:direct:+18148814454",
+    ...jeffInbound,
+  }, jeffCtx, handles), true);
   assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:default:direct",
   }, { channelId: "imessage" }, handles), false, "default:direct alone is not a VIP send");
   assert.equal(isVipDirectTurn({
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550077",
+  }, { channelId: "imessage" }, ["+15555550077", ...handles]), false,
+  "live default:direct:<handle> without inbound is not a VIP send");
+  assert.equal(isVipDirectTurn({
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550077",
+    senderId: "+15555550077",
+  }, { senderId: "+15555550077", channelId: "imessage" }, ["+15555550077"]), false,
+  "session suffix plus senderId is still not inbound");
+  assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:default:direct",
-  }, { senderId: "+15550000099", channelId: "imessage" }, handles), false);
+    ...jeffInbound,
+  }, { ...jeffCtx, senderId: "+15550000099" }, handles), false);
   assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:group:24",
-  }, { senderId: "+18148814454", channelId: "imessage" }, handles), false);
+    ...jeffInbound,
+  }, jeffCtx, handles), false);
   assert.equal(isVipDirectTurn({
     sessionKey: "agent:rico-shared:imessage:direct:+15550000099",
-  }, { senderId: "+15550000099", channelId: "imessage" }, handles), false);
-  assert.equal(senderHandleFromContext({}, { sessionKey: "agent:rico-vip:imessage:direct:+18148814454" }), "+18148814454");
+    senderId: "+15550000099",
+    content: "hello",
+    messageId: "stranger-1",
+  }, { senderId: "+15550000099", channelId: "imessage", messageId: "stranger-1" }, handles), false);
+  assert.equal(senderHandleFromContext({}, { sessionKey: "agent:rico-vip:imessage:direct:+18148814454" }), "");
+  assert.equal(senderHandleFromContext(jeffInbound, jeffCtx), "+18148814454");
 });
 
 test("Qwen selections are detected and the override is Claude with no local fallback", () => {

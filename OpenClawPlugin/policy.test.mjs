@@ -12,6 +12,7 @@ import {
   consumeOwnerAuthorization,
   conversationThreadKeys,
   createInboundUptimeLedger,
+  directHandleFromSessionKey,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -164,6 +165,11 @@ test("approved VIP chat ids and --deliver session metadata resolve without a one
     to: "chat_id:9",
     sessionKey: "agent:rico-shared:imessage:default:direct",
   }, { chatId: 9 }).access, "approved");
+  assert.deepEqual(outboundTargetCandidates({
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550077",
+  }), ["+15555550077"]);
+  assert.equal(directHandleFromSessionKey("agent:rico-shared:imessage:default:direct:+15555550077"), "+15555550077");
+  assert.equal(directHandleFromSessionKey("agent:rico-shared:imessage:default:direct"), "");
 });
 
 test("owner direct chats skip quiet hours", () => {
@@ -870,6 +876,12 @@ test("default:direct is not a thread and outbound requires inbound this uptime",
     threadId: 9,
     sessionKey: "agent:rico-shared:imessage:default:direct",
   }, { chatId: 9 }).sort(), ["chat_id:9", "direct:+18148814454"]);
+  assert.deepEqual(conversationThreadKeys({
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550077",
+  }, {}), ["direct:+15555550077"]);
+  assert.ok(!conversationThreadKeys({
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550077",
+  }, {}).includes("direct:+18148814454"));
 
   const inboundUptime = createInboundUptimeLedger();
   assert.equal(authorizeOutboundSend({

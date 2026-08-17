@@ -12,6 +12,7 @@ import {
   colleagueGroupSystemPrompt,
   createApprovedTargetMemory,
   createInboundUptimeLedger,
+  directHandleFromSessionKey,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -119,11 +120,10 @@ function isIMessageRun(event, ctx) {
 }
 
 function inboundEventForAgentRun(event, ctx) {
-  const sessionKey = String(ctx.sessionKey ?? "");
+  const sessionKey = String(ctx.sessionKey ?? event.sessionKey ?? "");
   const groupMatch = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
-  const directMatch = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
   const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
-  const senderId = ctx.senderId ?? (directMatch && directMatch[1] !== "default" ? directMatch[1] : undefined);
+  const senderId = ctx.senderId ?? event.senderId ?? (directHandleFromSessionKey(sessionKey) || undefined);
   return {
     channel: "imessage",
     senderId,

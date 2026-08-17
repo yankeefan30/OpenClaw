@@ -28,16 +28,21 @@ his own DM. Rico then texted people who had not written, including Al Sassoon
 `intentional_offline` true). **Do not bring him back.**
 
 Root cause: guard 0.5.8 last-mile treated approved / VIP / owner identity as
-enough to deliver. Gateway start resumed or flushed a `rico-shared` turn.
-Live `imessage:default:direct` is a shared session bucket, not a person, and
-`isVipDirectTurn` returned true for any default:direct. Last-mile banner
+enough to deliver. Live `rico-shared` sessions are keyed
+`imessage:default:direct:<handle>` (plus `group:24` / `group:33`). During the
+8:45–8:51 ET uptime the newest session was a default:direct that is **not**
+Jeff last4 4454; Jeff was second. VIP inbox jsonl has only morning Jeff
+events — no Al inbound. `rico-vip-route/vip-directs.json` is missing and is
+not required. `isVipDirectTurn` used to return true for any default:direct,
+and gateway start could resume/flush that existing session. Last-mile banner
 cancel does not stop a normal-looking unsolicited hello.
 
 ## What this repair changed (guard 0.5.9)
 
 1. Rico never sends an iMessage unless that **exact thread** had a new human
    inbound during **this Gateway uptime**. Thread keys are chat id / handle.
-   `default:direct` is never a thread.
+   Bare `default:direct` is never a thread. Live `default:direct:<handle>` is
+   that handle’s thread only, and still needs inbound this uptime.
 2. Gateway start, session resume, queued assistant flush, heartbeat, cron,
    and catch-up cannot deliver. A VIP flag, a session, or default:direct
    matching is not a send.
@@ -47,8 +52,9 @@ cancel does not stop a normal-looking unsolicited hello.
 4. Groups still need the existing mention / quiet rules.
 5. Last-mile still cancels Model Fallback / guard-block / empty-turn /
    public-safe shrugs.
-6. `default:direct` alone is not a VIP Claude pin. Jeff `chat_id=9` still
-   pins Claude when Jeff is the sender.
+6. `default:direct` and `default:direct:<handle>` are not VIP Claude pins
+   without a new inbound sender. Jeff `chat_id=9` last4 4454 still pins
+   Claude when Jeff writes.
 
 ## Polar apply order (Mac Mini)
 
