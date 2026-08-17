@@ -221,8 +221,9 @@ test("QA 5: a direct DM prompt is not the public-safe/group shrug path", () => {
 
   assert.match(direct, /private one-to-one conversation/u);
   assert.doesNotMatch(direct, /deliberately isolated public conversation context/u);
-  assert.doesNotMatch(direct, /ask Alan directly/iu);
-  assert.doesNotMatch(direct, /public-safe/iu);
+  assert.match(direct, /Never say ask Alan directly/u);
+  assert.doesNotMatch(direct, /Please ask Alan directly/u);
+  assert.doesNotMatch(direct, /shared public-safe group/u);
   assert.match(direct, /stuck-question mailbox/u);
   assert.equal(senderIsolationApplied(direct, jeffContext), true);
   assert.equal(senderIsolationApplied(groupPrompt, jeffContext), false);

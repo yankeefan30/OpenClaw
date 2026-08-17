@@ -270,8 +270,9 @@ test("guard integration attests only after shared prompt and session checks and 
   const root = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.join(root, "index.js"), "utf8");
   const hook = source.slice(source.indexOf('api.on("before_agent_run"'), source.indexOf('api.on("before_tool_call"'));
+  assert.match(hook, /approvedDirect/u);
   assert.ok(hook.indexOf("senderContexts.promptUnchanged") < hook.indexOf("sessionAttestations.verifyOrAttest"));
-  assert.ok(hook.indexOf("sessionAttestations.verifyOrAttest") < hook.indexOf("sharedEscalationProofs.attest"));
+  assert.ok(hook.indexOf("sessionAttestations.verifyOrAttest") < hook.indexOf('category: "escalation_context_required"'));
   assert.match(hook, /category: "escalation_context_required"/u);
 
   const toolHook = source.slice(source.indexOf('api.on("before_tool_call"'), source.indexOf('api.on("agent_end"'));

@@ -211,7 +211,10 @@ export function internalRuntimePayloadDisposition(event, ctx = {}) {
   if (payload.isError === true || isInternalModelBackendFailure(payload.text)) {
     return { action: "replace", reason: "runtime_error_payload" };
   }
-  if (payload.isFallbackNotice === true || isInternalModelRoutingNotice(payload.text) || containsModelFallbackLine(payload.text)) {
+  if (payload.isFallbackNotice === true || isInternalModelRoutingNotice(payload.text)) {
+    return { action: "cancel", reason: "model_fallback_notice" };
+  }
+  if (containsModelFallbackLine(payload.text)) {
     const stripped = stripInternalModelRoutingText(payload.text);
     if (!stripped || isForbiddenPublicSafeShrug(stripped)) {
       return { action: "cancel", reason: "model_fallback_notice" };

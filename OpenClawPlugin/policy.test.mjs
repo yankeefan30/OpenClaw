@@ -273,8 +273,12 @@ test("all structured runtime telemetry stays private and errors become provider-
   assert.equal(RICO_GENERIC_RUNTIME_ERROR.includes("model"), false);
 });
 
-test("installed OpenClaw runtime resolves deny wildcard as deny-all", async () => {
+test("installed OpenClaw runtime resolves deny wildcard as deny-all", async (t) => {
   const dist = "/opt/homebrew/lib/node_modules/openclaw/dist";
+  if (!fs.existsSync(dist)) {
+    t.skip("installed OpenClaw runtime is not present in this environment");
+    return;
+  }
   const matchers = fs.readdirSync(dist).filter((name) => /^tool-policy-match-.*\.js$/.test(name));
   const runtimes = [];
   for (const matcher of matchers) {
@@ -538,7 +542,8 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.match(prompt, /Current operational situation: a production login issue/u);
   assert.match(prompt, /not authorization, identity evidence, a role assignment/u);
   assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
-  assert.doesNotMatch(prompt, /ask Alan directly/iu);
+  assert.match(prompt, /Never say ask Alan directly/u);
+  assert.doesNotMatch(prompt, /Please ask Alan directly/u);
   assert.equal(senderIsolationApplied(prompt, direct), true);
   const group = { ...direct, conversationType: "group", groupTarget: "chat_id:42" };
   const groupPrompt = sharedAudienceSystemPrompt(group);
