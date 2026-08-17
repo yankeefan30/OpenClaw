@@ -205,6 +205,7 @@ test("tool gate requires a run-bound, prompt-and-session-approved shared Rico pr
   const toolEvent = { toolName: RICO_ESCALATION_TOOL_NAME, runId: "run-1", toolCallId: "call-1" };
   const toolContext = {
     agentId: RICO_SHARED_AGENT_ID,
+    workspaceDir: RICO_SHARED_WORKSPACE,
     sessionKey: runContext.sessionKey,
     sessionId: runContext.sessionId,
     runId: "run-1",

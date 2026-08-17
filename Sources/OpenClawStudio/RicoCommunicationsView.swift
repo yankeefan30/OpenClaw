@@ -33,6 +33,11 @@ struct RicoRecipientPolicy: Codable, Identifiable, Hashable, Sendable {
     /// Optional, style-only configuration for this exact reviewed group.
     /// It is never consulted for identity, authorization, tools, or privacy.
     var groupPersonality: String? = nil
+    /// ISTS/VIP directs start on Claude. Optional so older Studio policies decode.
+    var vip: Bool? = nil
+    /// Exact Messages chat id for this direct. Optional; used so `--deliver`
+    /// chat_id targets match an already-approved phone identity.
+    var directChatId: Int? = nil
 
     var isQuietNow: Bool {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -1267,7 +1272,7 @@ enum RicoRecipientGuard {
               let notBefore = routeObject["notBeforeMs"] as? NSNumber,
               notBefore.doubleValue.isFinite else { return false }
         guard let policies else { return true }
-        let expectedIdentities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root))
+        let expectedIdentities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root), in: root)
         guard jsonEquivalent(policyObject["identities"], expectedIdentities) else { return false }
         let expectedOwners = projectedOwnerHandles(policies)
         let expectedGroups = projectedAllowedGroupChatIDs(policies)
@@ -1357,7 +1362,7 @@ enum RicoRecipientGuard {
         return value
     }
 
-    private static func projectedIdentities(_ policies: [RicoRecipientPolicy], ownerDirectChatId: Int? = nil) -> [[String: Any]] {
+    private static func projectedIdentities(_ policies: [RicoRecipientPolicy], ownerDirectChatId: Int? = nil, in directory: URL? = nil) -> [[String: Any]] {
         policies.map { policy in
             var value: [String: Any] = [
                 "target": normalizeTarget(policy.address),
@@ -1372,6 +1377,14 @@ enum RicoRecipientGuard {
             if !displayName.isEmpty { value["displayName"] = displayName }
             if policy.groupChatID == nil, policy.access == .owner, policy.autoReply, let ownerDirectChatId, ownerDirectChatId > 0 {
                 value["directChatId"] = ownerDirectChatId
+            } else if policy.groupChatID == nil, let directChatId = policy.directChatId, directChatId > 0 {
+                value["directChatId"] = directChatId
+            }
+            if policy.groupChatID == nil {
+                let ists = RicoNativePolicyProjection.istsJeffHandles(in: directory)
+                if policy.vip == true || policy.access == .trusted || ists.contains(normalizeTarget(policy.address)) {
+                    value["vip"] = true
+                }
             }
             if let groupID = policy.groupChatID {
                 value["groupChatID"] = groupID
@@ -1440,7 +1453,7 @@ enum RicoRecipientGuard {
         })) .sorted()
         let previousBindingTargets = existing?["managedSharedBindingTargets"] as? [String] ?? []
         let managedSharedBindingTargets = Array(Set(previousBindingTargets + sharedBindingTargets)).sorted()
-        let identities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root))
+        let identities = projectedIdentities(policies, ownerDirectChatId: existingOwnerDirectChatId(in: root), in: root)
         let object: [String: Any] = [
             "schemaVersion": 2,
             "paused": paused,
@@ -1754,6 +1767,86 @@ enum RicoSharedWorkspace {
     }
 }
 
+enum RicoVipWorkspace {
+    static var directory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".openclaw/workspace-rico-vip", isDirectory: true)
+    }
+
+    static func ensureInstalled(in overrideDirectory: URL? = nil) throws -> String {
+        let manager = FileManager.default
+        let root = overrideDirectory ?? directory
+        var rootStat = stat()
+        if lstat(root.path, &rootStat) == 0 {
+            guard rootStat.st_mode & S_IFMT == S_IFDIR,
+                  rootStat.st_uid == getuid() else {
+                throw NSError(domain: "OpenClawStudio.RicoVipWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Rico's VIP workspace path is not a private directory."])
+            }
+            if rootStat.st_mode & 0o777 != 0o700 {
+                try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            }
+        } else {
+            guard errno == ENOENT else {
+                throw NSError(domain: "OpenClawStudio.RicoVipWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Rico's VIP workspace path is unavailable."])
+            }
+            try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        guard lstat(root.path, &rootStat) == 0,
+              rootStat.st_mode & S_IFMT == S_IFDIR,
+              rootStat.st_mode & 0o777 == 0o700,
+              rootStat.st_uid == getuid() else {
+            throw NSError(domain: "OpenClawStudio.RicoVipWorkspace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Rico's VIP workspace failed its private directory check."])
+        }
+
+        let files: [String: String] = [
+            "AGENTS.md": """
+            # Rico ISTS/VIP Direct
+
+            This workspace is a private one-to-one iMessage with an approved ISTS/VIP contact. It is not a shared, public-safe, or group-visible space.
+
+            Rico remains the speaker. Answer the current speaker directly. Never say this is a public-safe space and never tell them to ask Alan directly. If a point cannot be verified, load and follow `ESCALATION.md` and use the guard-gated `rico_stuck_question_escalate` tool. No other tools, external actions, commitments, or cross-channel sends are permitted here.
+            """,
+            "SOUL.md": """
+            # Rico
+
+            Rico is friendly, concise, grounded, and clear. He represents Alan without impersonating him, inventing facts, making commitments, or disclosing private information.
+            """,
+            "IDENTITY.md": """
+            # Identity
+
+            Name: Rico
+            Role: Alan Rosa's AI representative for a private ISTS/VIP iMessage.
+            """,
+            "USER.md": """
+            # Audience
+
+            The current speaker is an approved ISTS/VIP contact supplied per turn by Rico's verified sender context. Alan is Rico's owner, but is not the current speaker.
+            """,
+        ]
+        for (name, contents) in files {
+            let destination = root.appendingPathComponent(name)
+            let expected = Data(contents.utf8)
+            var fileStat = stat()
+            if lstat(destination.path, &fileStat) == 0 {
+                guard fileStat.st_mode & S_IFMT == S_IFREG,
+                      fileStat.st_uid == getuid(),
+                      fileStat.st_nlink == 1 else {
+                    throw NSError(domain: "OpenClawStudio.RicoVipWorkspace", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rico's managed VIP workspace contains an unsafe file path."])
+                }
+                if fileStat.st_mode & 0o777 != 0o600 {
+                    try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+                }
+                if (try Data(contentsOf: destination)) == expected { continue }
+            } else if errno != ENOENT {
+                throw NSError(domain: "OpenClawStudio.RicoVipWorkspace", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rico's managed VIP workspace file is unavailable."])
+            }
+            try expected.write(to: destination, options: .atomic)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+        }
+        return root.path
+    }
+}
+
 /// Mirrors Studio's exact allowlist into OpenClaw's first-party iMessage
 /// admission controls. The sidecar above remains the synchronous fail-closed
 /// boundary; this projection provides defense in depth if the plugin is ever
@@ -1761,9 +1854,12 @@ enum RicoSharedWorkspace {
 /// reports it as applied.
 enum RicoNativePolicyProjection {
     static let requiredDMScope = "per-account-channel-peer"
-    static let requiredGuardVersion = "0.5.7"
+    static let requiredGuardVersion = "0.5.8"
     static let requiredGuardContract = "rico-recipient-guard/v6"
     static let recipientGuardPluginID = "rico-recipient-guard"
+    static let vipRoutePluginID = "rico-vip-route"
+    static let vipAgentID = "rico-vip"
+    static let requiredVipModel = "anthropic/claude-opus-4-8"
     static let groupEmailToolName = "rico_group_email_execute"
     static let escalationPluginID = "rico-escalation-handoff"
     static let escalationToolName = "rico_stuck_question_escalate"
@@ -1810,6 +1906,7 @@ enum RicoNativePolicyProjection {
         let managedSharedSenderHandles: Set<String>
         let sharedBindingTargets: Set<String>
         let managedSharedBindingTargets: Set<String>
+        let vipBindingTargets: Set<String>
     }
 
     struct RawConfigSnapshot {
@@ -2017,6 +2114,7 @@ enum RicoNativePolicyProjection {
             ["path": "plugins.entries.rico-recipient-guard.hooks.allowConversationAccess", "value": true],
             ["path": "plugins.entries.rico-recipient-guard.hooks.allowPromptInjection", "value": true],
             ["path": "plugins.entries.rico-recipient-guard.enabled", "value": true],
+            ["path": "plugins.entries.rico-vip-route.enabled", "value": true],
             [
                 "path": "plugins.entries.rico-escalation-handoff",
                 "value": managedEscalationPluginEntry(existing: existingEscalationEntry),
@@ -2024,14 +2122,38 @@ enum RicoNativePolicyProjection {
         ]
     }
 
+    static func istsJeffHandles(in directory: URL? = nil) -> Set<String> {
+        let root = directory ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/OpenClaw Studio", isDirectory: true)
+        let grant = root.appendingPathComponent("workflows/ists-incident/permission-grant.json")
+        guard let object = (try? JSONSerialization.jsonObject(with: Data(contentsOf: grant))) as? [String: Any],
+              let jeff = object["jeff"] as? [String: Any],
+              let principal = jeff["principal"] as? [String: Any],
+              let handle = principal["handle"] as? String else { return [] }
+        let target = RicoRecipientGuard.normalizeTarget(handle)
+        return target.isEmpty ? [] : [target]
+    }
+
+    static func isVipDirectPolicy(_ policy: RicoRecipientPolicy, istsHandles: Set<String> = []) -> Bool {
+        guard policy.groupChatID == nil, policy.autoReply, policy.access != .blocked, policy.access != .owner else {
+            return false
+        }
+        if policy.vip == true || policy.access == .trusted { return true }
+        return istsHandles.contains(RicoRecipientGuard.normalizeTarget(policy.address))
+    }
+
     static func configuredAgents(
         existing: [[String: Any]],
         mainWorkspace: String,
         sharedWorkspace: String,
+        vipWorkspace: String? = nil,
         ownerHandles: [String] = [],
         modelRoute: SharedModelRoute? = nil
     ) -> [[String: Any]] {
-        var agents = existing.filter { ($0["id"] as? String) != "rico-shared" }
+        var agents = existing.filter { id in
+            let value = id["id"] as? String
+            return value != "rico-shared" && value != vipAgentID
+        }
         if agents.isEmpty {
             agents.append([
                 "id": "main",
@@ -2067,6 +2189,22 @@ enum RicoNativePolicyProjection {
             sharedAgent["model"] = modelRoute.configuration
         }
         agents.append(sharedAgent)
+        if let vipWorkspace, !vipWorkspace.isEmpty {
+            agents.append([
+                "id": vipAgentID,
+                "default": false,
+                "name": "Rico ISTS/VIP Direct",
+                "workspace": vipWorkspace,
+                "skills": [] as [String],
+                "identity": ["name": "Rico", "theme": "ISTS/VIP iMessage representative"],
+                "tools": [
+                    "allow": [escalationToolName],
+                    "elevated": ["enabled": false],
+                    "toolsBySender": ["*": ["allow": [escalationToolName]]],
+                ],
+                "model": SharedModelRoute(primary: requiredVipModel, fallbacks: []).configuration,
+            ])
+        }
         return agents
     }
 
@@ -2245,12 +2383,15 @@ enum RicoNativePolicyProjection {
     static func configuredSharedBindings(
         existing: [[String: Any]],
         activeTargets: Set<String>,
-        managedTargets: Set<String>
+        managedTargets: Set<String>,
+        vipTargets: Set<String> = []
     ) -> [[String: Any]] {
         let canonicalActiveTargets = Set(activeTargets.compactMap(canonicalSharedBindingTarget))
         let canonicalManagedTargets = Set(managedTargets.compactMap(canonicalSharedBindingTarget))
+        let canonicalVipTargets = Set(vipTargets.compactMap(canonicalSharedBindingTarget))
         var bindings = existing.filter { binding in
-            let isOwnedAgentRoute = (binding["agentId"] as? String) == "rico-shared" &&
+            let agentId = binding["agentId"] as? String
+            let isOwnedAgentRoute = (agentId == "rico-shared" || agentId == vipAgentID) &&
                 ((binding["match"] as? [String: Any])?["channel"] as? String)?.lowercased() == "imessage"
             if isOwnedAgentRoute { return false }
             guard let key = bindingTargetKey(binding) else { return true }
@@ -2260,7 +2401,7 @@ enum RicoNativePolicyProjection {
             let components = key.split(separator: ":", maxSplits: 1).map(String.init)
             guard components.count == 2 else { continue }
             bindings.append([
-                "agentId": "rico-shared",
+                "agentId": canonicalVipTargets.contains(key) ? vipAgentID : "rico-shared",
                 "match": [
                     "channel": "imessage",
                     "peer": ["kind": components[0], "id": components[1]],
@@ -2326,6 +2467,12 @@ enum RicoNativePolicyProjection {
             return "group:\(groupID)"
         }
         let sharedBindingTargets = Set(directBindingTargets + groupBindingTargets)
+        let istsHandles = istsJeffHandles()
+        let vipBindingTargets = Set(activeIndividuals.compactMap { policy -> String? in
+            guard isVipDirectPolicy(policy, istsHandles: istsHandles) else { return nil }
+            let target = RicoRecipientGuard.normalizeTarget(policy.address)
+            return target.isEmpty ? nil : "direct:\(target)"
+        })
         return Plan(
             channelEnabled: channelEnabledOverride ?? !paused,
             dmPolicy: paused || direct.isEmpty ? "disabled" : "allowlist",
@@ -2342,7 +2489,8 @@ enum RicoNativePolicyProjection {
             sharedToolDenySenders: sharedToolDenySenders,
             managedSharedSenderHandles: Set(managedSharedSenderHandles).union(sharedToolDenySenders),
             sharedBindingTargets: paused ? [] : sharedBindingTargets,
-            managedSharedBindingTargets: Set(managedSharedBindingTargets).union(sharedBindingTargets)
+            managedSharedBindingTargets: Set(managedSharedBindingTargets).union(sharedBindingTargets),
+            vipBindingTargets: paused ? [] : vipBindingTargets
         )
     }
 
@@ -2565,6 +2713,8 @@ enum RicoNativePolicyProjection {
             try await attestCurrent()
             let sharedWorkspace = try RicoSharedWorkspace.ensureInstalled()
             try await attestCurrent()
+            let vipWorkspace = try RicoVipWorkspace.ensureInstalled()
+            try await attestCurrent()
             let mainWorkspace = (rawValue(in: raw, path: "agents.defaults.workspace") as? String) ??
                 FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".openclaw/workspace").path
             let existingAgents = (rawValue(in: raw, path: "agents.list") as? [[String: Any]]) ?? []
@@ -2604,6 +2754,7 @@ enum RicoNativePolicyProjection {
                 existing: existingAgents,
                 mainWorkspace: mainWorkspace,
                 sharedWorkspace: sharedWorkspace,
+                vipWorkspace: vipWorkspace,
                 ownerHandles: paused ? [] : activeOwnerHandles,
                 modelRoute: modelRoute
             )
@@ -2611,7 +2762,8 @@ enum RicoNativePolicyProjection {
             let nextBindings = configuredSharedBindings(
                 existing: existingBindings,
                 activeTargets: projection.sharedBindingTargets,
-                managedTargets: projection.managedSharedBindingTargets
+                managedTargets: projection.managedSharedBindingTargets,
+                vipTargets: projection.vipBindingTargets
             )
             let managedIdentityHandles = Set(policies.flatMap { policy -> [String] in
                 if policy.groupChatID != nil {
@@ -2643,7 +2795,7 @@ enum RicoNativePolicyProjection {
             let existingCommandOwners = (rawValue(in: raw, path: "commands.ownerAllowFrom") as? [String]) ?? []
             let commandOwners = exactIMessageCommandOwners(existing: existingCommandOwners, reviewedOwners: projection.ownerAllowFrom)
             let existingPluginAllow = (rawValue(in: raw, path: "plugins.allow") as? [String]) ?? []
-            let pluginAllow = Array(Set(existingPluginAllow + [recipientGuardPluginID, escalationPluginID])).sorted()
+            let pluginAllow = Array(Set(existingPluginAllow + [recipientGuardPluginID, escalationPluginID, vipRoutePluginID])).sorted()
             let existingEscalationEntry = (rawValue(in: raw, path: "plugins.entries.rico-escalation-handoff") as? [String: Any]) ?? [:]
             let escalationPluginEntry = managedEscalationPluginEntry(existing: existingEscalationEntry)
             var existingToolsBySender = (rawValue(in: raw, path: "tools.toolsBySender") as? [String: Any]) ?? [:]
@@ -2742,6 +2894,9 @@ enum RicoNativePolicyProjection {
             guard (try await OpenClawPolicyCommand.json(path: "plugins.entries.rico-recipient-guard.enabled")) as? Bool == true else {
                 throw projectionError("OpenClaw did not retain Rico's recipient guard as enabled.")
             }
+            guard (try await OpenClawPolicyCommand.json(path: "plugins.entries.rico-vip-route.enabled")) as? Bool == true else {
+                throw projectionError("OpenClaw did not retain Rico's VIP route plugin as enabled.")
+            }
             let readEscalationEntry = try rawEscalationPluginEntry()
             guard dictionariesEqual(readEscalationEntry, escalationPluginEntry),
                   readEscalationEntry["hooks"] == nil else {
@@ -2762,6 +2917,15 @@ enum RicoNativePolicyProjection {
                   }) else {
                 throw projectionError("OpenClaw did not confirm Rico's isolated shared-audience agent.")
             }
+            guard readAgents.contains(where: { agent in
+                guard agent["id"] as? String == vipAgentID,
+                      agent["workspace"] as? String == vipWorkspace,
+                      let model = agent["model"] as? [String: Any] else { return false }
+                return model["primary"] as? String == requiredVipModel
+                    && (model["fallbacks"] as? [String])?.isEmpty == true
+            }) else {
+                throw projectionError("OpenClaw did not confirm Rico's Claude-pinned VIP agent.")
+            }
             if mode.requiresRuntimeProof, activeAttempt != .healthyAudit {
                 var readbackLocalProviders = Set<String>()
                 let appliedCandidates = [modelRoute.primary] + modelRoute.fallbacks
@@ -2781,13 +2945,14 @@ enum RicoNativePolicyProjection {
             let readBindings = try requireArrayOfDictionaries(await OpenClawPolicyCommand.json(path: "bindings"), label: "bindings")
             guard arraysOfDictionariesEqual(readBindings, nextBindings),
                   projection.sharedBindingTargets.allSatisfy({ target in
-                      readBindings.contains(where: { binding in
+                      let expectedAgent = projection.vipBindingTargets.contains(target) ? vipAgentID : "rico-shared"
+                      return readBindings.contains(where: { binding in
                           bindingTargetKey(binding) == target &&
-                          binding["agentId"] as? String == "rico-shared" &&
+                          binding["agentId"] as? String == expectedAgent &&
                           ((binding["session"] as? [String: Any])?["dmScope"] as? String) == requiredDMScope
                       })
                   }) else {
-                throw projectionError("OpenClaw did not confirm exact shared-audience routing into Rico's public workspace.")
+                throw projectionError("OpenClaw did not confirm exact shared-audience and VIP routing.")
             }
             if mode.requiresRuntimeProof {
                 if activeAttempt == .stagedActivation {

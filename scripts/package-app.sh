@@ -136,6 +136,13 @@ cp "$project_root/RicoSkillsRuntime/archive.mjs" \
    "$project_root/RicoSkillsRuntime/store.mjs" \
    "$project_root/RicoSkillsRuntime/package.json" \
    "$contents_path/Resources/RicoRecipientGuard/RicoSkillsRuntime/"
+mkdir -p "$contents_path/Resources/RicoVipRoute"
+cp "$project_root/RicoVipRoute/index.js" \
+   "$project_root/RicoVipRoute/route.js" \
+   "$project_root/RicoVipRoute/openclaw.plugin.json" \
+   "$project_root/RicoVipRoute/package.json" \
+   "$project_root/RicoVipRoute/README.md" \
+   "$contents_path/Resources/RicoVipRoute/"
 mkdir -p "$contents_path/Resources/RicoAutonomyGovernor"
 cp "$project_root/AutonomyGovernorPlugin/index.js" \
    "$project_root/AutonomyGovernorPlugin/governor.js" \

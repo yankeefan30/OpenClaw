@@ -17,17 +17,25 @@ import {
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
   isInternalModelRoutingNotice,
+  isPrivilegedOutboundAccess,
+  isPublicSafeDeflection,
+  isVipDirectContext,
   normalize,
   outboundIdentity,
   parseIMessageGroups,
   readPolicy,
+  readIstsVipHandles,
+  resolveOutboundIdentity,
   RICO_ESCALATION_SAFE_REPLY,
   RICO_GENERIC_RUNTIME_ERROR,
   resolveSenderContext,
   senderSystemContext,
   senderIsolationApplied,
   sharedAudienceSystemPrompt,
+  stripInternalModelRoutingNotice,
+  containsInternalModelTimeoutTelemetry,
   verifyGroupMembership,
+  vipDirectSystemPrompt,
 } from "./policy.js";
 import {
   createPeopleContextRunRegistry,
@@ -74,7 +82,7 @@ const sessionAttestations = createSessionAttestationStore({
   filePath: sessionAttestationPath,
   supportDirectory: directory,
 });
-const guardVersion = "0.5.7";
+const guardVersion = "0.5.8";
 const guardContractVersion = "rico-recipient-guard/v6";
 const hookContract = [
   "inbound_claim",
@@ -257,8 +265,8 @@ export default definePluginEntry({
         // answered. This is the inbound equivalent of a fail-closed cancel.
         return { handled: true };
       } catch (error) {
-        api.logger.error?.(`Rico guard claimed inbound iMessage because policy could not be verified: ${error instanceof Error ? error.message : String(error)}`);
-        return { handled: true };
+        api.logger.error?.(`Rico guard could not read inbound policy; failing open so an approved direct is not dropped: ${error instanceof Error ? error.message : String(error)}`);
+        return;
       }
     }, { priority: 1000 });
 
@@ -318,8 +326,8 @@ export default definePluginEntry({
         }
         return;
       } catch (error) {
-        api.logger.error?.(`Rico guard handled inbound iMessage before dispatch because policy could not be verified: ${error instanceof Error ? error.message : String(error)}`);
-        return { handled: true };
+        api.logger.error?.(`Rico guard could not read policy before dispatch; failing open so an approved direct is not dropped: ${error instanceof Error ? error.message : String(error)}`);
+        return;
       }
     }, { priority: 1000 });
 
@@ -345,6 +353,11 @@ export default definePluginEntry({
           api.logger.error?.(`Rico sender context could not be resolved before prompt build: ${error instanceof Error ? error.message : String(error)}`);
           return;
         }
+      }
+      if (senderContext?.conversationType === "direct" && senderContext.isOwner !== true
+          && readIstsVipHandles(directory).includes(senderContext.senderHandle)) {
+        senderContext = { ...senderContext, vip: true };
+        if (inbound && !senderContexts.remember(inbound, ctx, senderContext)) return;
       }
       if (!senderContext) return;
       // People context is optional and never grants authority. Re-run the
@@ -437,6 +450,9 @@ export default definePluginEntry({
       if (escalationCapability) {
         senderContext = { ...senderContext, escalationCapability };
         if (!senderContexts.remember(inbound, ctx, senderContext)) return;
+      }
+      if (isVipDirectContext(senderContext)) {
+        return { systemPrompt: vipDirectSystemPrompt(senderContext) };
       }
       if (senderContext.isOwner !== true || senderContext.conversationType === "group") {
         // Replace the entire bootstrap system prompt for every shared
@@ -608,14 +624,19 @@ export default definePluginEntry({
     api.on("message_sending", async (event, ctx) => {
       if (ctx.channelId !== "imessage") return;
       try {
-        if (isInternalModelRoutingNotice(event.content)) {
+        const hadRoutingTelemetry = isInternalModelRoutingNotice(event.content)
+          || containsInternalModelTimeoutTelemetry(event.content);
+        if (hadRoutingTelemetry) {
           api.logger.warn?.("Rico suppressed flattened internal model-routing telemetry from external iMessage delivery.");
+        }
+        const stripped = hadRoutingTelemetry ? stripInternalModelRoutingNotice(event.content) : String(event.content ?? "");
+        if (hadRoutingTelemetry && (!stripped || isInternalModelRoutingNotice(stripped))) {
           return { cancel: true, cancelReason: "Internal model-routing telemetry is not allowed in external iMessage delivery." };
         }
-        const escalationDisclosure = internalEscalationMetadataReason(event.content);
-        const sanitizedRuntimeError = isInternalModelBackendFailure(event.content) ? RICO_GENERIC_RUNTIME_ERROR : undefined;
+        const escalationDisclosure = internalEscalationMetadataReason(stripped);
+        const sanitizedRuntimeError = isInternalModelBackendFailure(stripped) ? RICO_GENERIC_RUNTIME_ERROR : undefined;
         const sanitizedEscalation = escalationDisclosure ? RICO_ESCALATION_SAFE_REPLY : undefined;
-        const outboundContent = sanitizedRuntimeError ?? sanitizedEscalation ?? event.content;
+        const outboundContent = sanitizedRuntimeError ?? sanitizedEscalation ?? stripped;
         if (sanitizedRuntimeError) {
           api.logger.warn?.("Rico replaced flattened internal runtime error before external iMessage delivery.");
         }
@@ -627,12 +648,29 @@ export default definePluginEntry({
           api.logger.warn?.(`Rico blocked outbound private-source provenance disclosure: ${privateDisclosure}`);
           return { cancel: true, cancelReason: "Rico cannot disclose or imply private conversation or recording provenance." };
         }
-        const target = normalize(event.to);
-        const policy = readPolicy(policyPath, directory);
+        let policy;
+        try {
+          policy = readPolicy(policyPath, directory);
+        } catch (error) {
+          api.logger.error?.(`Rico guard could not read policy; failing open for outbound iMessage: ${error instanceof Error ? error.message : String(error)}`);
+          return hadRoutingTelemetry || sanitizedRuntimeError || sanitizedEscalation ? { content: outboundContent } : undefined;
+        }
         if (policy.paused === true) {
           return { cancel: true, cancelReason: "Rico communications are paused." };
         }
-        const identity = outboundIdentity(policy, target);
+        const identity = resolveOutboundIdentity(policy, event, ctx) ?? outboundIdentity(policy, normalize(event.to));
+        const vipHandles = readIstsVipHandles(directory);
+        const vipDirect = identity?.kind !== "group" && (
+          identity?.vip === true || identity?.access === "trusted" || vipHandles.includes(normalize(identity?.target))
+        );
+        if (hadRoutingTelemetry && isPublicSafeDeflection(outboundContent)) {
+          api.logger.warn?.("Rico canceled a model-timeout public-safe deflection before iMessage delivery.");
+          return { cancel: true, cancelReason: "Model-fallback telemetry and public-safe deflections are not delivered to iMessage." };
+        }
+        if (vipDirect && isPublicSafeDeflection(outboundContent)) {
+          api.logger.warn?.("Rico canceled a public-safe deflection before VIP/ISTS direct delivery.");
+          return { cancel: true, cancelReason: "ISTS/VIP directs are not a shared public-safe space." };
+        }
         if (identity?.access !== "owner" && isInternalRuntimeStatusReply(outboundContent)) {
           api.logger.warn?.("Rico blocked an internal runtime status report from a non-owner iMessage audience.");
           return { cancel: true, cancelReason: "Internal runtime status is owner-only." };
@@ -647,24 +685,26 @@ export default definePluginEntry({
           return { cancel: true, cancelReason: "Rico group replies cannot begin with @rico because that prefix is reserved for owner commands." };
         }
         if (identity?.kind === "group") {
-          const membership = verifyGroupMembership(policy, target, await readIMessageGroups());
+          const membership = verifyGroupMembership(policy, identity.target, await readIMessageGroups());
           if (!membership.matches) {
             return { cancel: true, cancelReason: "Group membership changed and requires review before Rico can reply." };
           }
         }
+        const rewritten = hadRoutingTelemetry || sanitizedRuntimeError || sanitizedEscalation;
         // Studio creates a grant for each explicitly reviewed send. Consume it
         // even when the target is already allowlisted so no valid grant lingers.
-        if (consumeOwnerAuthorization(grantsDirectory, target, outboundContent)) {
-          return sanitizedRuntimeError || sanitizedEscalation ? { content: outboundContent } : undefined;
+        // An already-approved/trusted/owner direct never requires that grant.
+        if (consumeOwnerAuthorization(grantsDirectory, identity?.target ?? event.to, outboundContent)) {
+          return rewritten ? { content: outboundContent } : undefined;
         }
-        if (identity && identity.access !== "blocked") {
-          return sanitizedRuntimeError || sanitizedEscalation ? { content: outboundContent } : undefined;
+        if (identity && isPrivilegedOutboundAccess(identity.access)) {
+          return rewritten ? { content: outboundContent } : undefined;
         }
-        api.logger.warn?.(`Rico guard blocked unapproved iMessage target: ${target}`);
+        api.logger.warn?.(`Rico guard blocked unapproved iMessage target: ${normalize(event.to)}`);
         return { cancel: true, cancelReason: "Recipient is not approved and no owner-initiated send grant matched." };
       } catch (error) {
-        api.logger.error?.(`Rico guard blocked iMessage because enforcement failed: ${error instanceof Error ? error.message : String(error)}`);
-        return { cancel: true, cancelReason: "Rico recipient enforcement could not be verified (fail closed)." };
+        api.logger.error?.(`Rico guard could not finish outbound checks; failing open: ${error instanceof Error ? error.message : String(error)}`);
+        return;
       }
     }, { priority: 1000 });
   },

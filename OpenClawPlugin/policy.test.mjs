@@ -16,16 +16,22 @@ import {
   isInternalModelBackendFailure,
   isInternalModelRoutingNotice,
   isInternalRuntimeStatusReply,
+  isPublicSafeDeflection,
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
+  isVipDirectContext,
   messageHash,
   normalize,
   outboundIdentity,
+  outboundTargetCandidates,
   parseIMessageGroups,
   readPolicy,
+  resolveOutboundIdentity,
   RICO_ESCALATION_SAFE_REPLY,
   RICO_GENERIC_RUNTIME_ERROR,
   resolveSenderContext,
+  stripInternalModelRoutingNotice,
+  vipDirectSystemPrompt,
   safeDisplayName,
   sanitizeGroupPersonality,
   senderContextText,
@@ -69,12 +75,12 @@ const contact = {
   quietEnd: 0,
 };
 
-test("unknown, paused, unmentioned, and auto-reply-off inbound messages fail closed", () => {
+test("unknown, paused, and auto-reply-off inbound messages fail closed; approved directs do not need @rico", () => {
   const base = { channel: "imessage", senderId: "+15550000002", isGroup: false, content: "hello" };
   assert.equal(evaluateInbound(base, {}, policy([])).allow, false);
   assert.equal(evaluateInbound(base, {}, policy([contact], true)).allow, false);
-  assert.equal(evaluateInbound(base, {}, policy([contact])).allow, false);
-  assert.equal(evaluateInbound({ ...base, wasMentioned: true }, {}, policy([contact])).allow, false);
+  assert.equal(evaluateInbound(base, {}, policy([contact])).allow, true);
+  assert.equal(evaluateInbound({ ...base, wasMentioned: true }, {}, policy([contact])).allow, true);
   assert.equal(evaluateInbound({ ...base, content: "@RICO help" }, {}, policy([{ ...contact, autoReply: false }])).allow, false);
   assert.equal(evaluateInbound({ ...base, content: "@RICO help" }, {}, policy([contact])).allow, true);
 });
@@ -114,6 +120,38 @@ test("owner self-chat chat ids are the same outbound identity as the owner handl
   assert.equal(outboundIdentity(registry, "chat_id:24"), undefined);
 });
 
+test("approved VIP chat ids and --deliver session metadata resolve without a one-shot grant", () => {
+  const jeff = {
+    target: "+18148814454",
+    kind: "individual",
+    access: "approved",
+    requireMention: true,
+    autoReply: true,
+    quietStart: 22,
+    quietEnd: 8,
+    vip: true,
+    directChatId: 321,
+  };
+  const registry = policy([jeff]);
+  assert.equal(outboundIdentity(registry, "+18148814454").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:321").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:999"), undefined);
+  const fromDeliver = resolveOutboundIdentity(registry, {
+    to: "chat_id:321",
+    sessionKey: "agent:rico-shared:imessage:direct:+18148814454",
+    content: "hello from Polar",
+  }, { channelId: "imessage" });
+  assert.equal(fromDeliver.access, "approved");
+  assert.equal(fromDeliver.target, "+18148814454");
+  const fromSessionOnly = resolveOutboundIdentity(registry, {
+    sessionKey: "agent:rico-vip:imessage:direct:+18148814454",
+  }, {});
+  assert.equal(fromSessionOnly.access, "approved");
+  assert.deepEqual(outboundTargetCandidates({ to: undefined, sessionKey: "agent:main:imessage:direct:+18148814454" }), [
+    "+18148814454",
+  ]);
+});
+
 test("owner direct chats skip quiet hours", () => {
   const owner = {
     target: "+15550000001",
@@ -140,7 +178,36 @@ test("owner direct chats skip quiet hours", () => {
   }, {}, policy([owner]), late).allow, true);
   assert.equal(evaluateInbound({
     channel: "imessage", senderId: "+15550000002", isGroup: false, content: "are you there",
-  }, {}, policy([contact]), late).allow, false);
+  }, {}, policy([contact]), late).allow, true);
+});
+
+test("approved VIP directs skip quiet hours and @rico; groups still require both", () => {
+  const jeff = {
+    target: "+18148814454",
+    kind: "individual",
+    access: "approved",
+    requireMention: true,
+    autoReply: true,
+    quietStart: 22,
+    quietEnd: 8,
+    vip: true,
+    directChatId: 321,
+  };
+  const sevenAm = new Date();
+  sevenAm.setHours(7, 15, 0, 0);
+  assert.equal(evaluateInbound({
+    channel: "imessage", senderId: "+18148814454", isGroup: false, content: "You around?",
+  }, {}, policy([jeff]), sevenAm).allow, true);
+  const group = {
+    target: "chat_id:42", kind: "group", access: "approved", requireMention: true,
+    autoReply: true, quietStart: 22, quietEnd: 8, participants: ["+18148814454"],
+  };
+  assert.equal(evaluateInbound({
+    channel: "imessage", senderId: "+18148814454", isGroup: true, threadId: 42, content: "You around?",
+  }, {}, policy([jeff, group]), sevenAm).allow, false);
+  assert.equal(evaluateInbound({
+    channel: "imessage", senderId: "+18148814454", isGroup: true, threadId: 42, content: "@rico status",
+  }, {}, policy([jeff, group]), sevenAm).allow, false);
 });
 
 test("the owner-route command prefix is recognized exactly for loop prevention", () => {
@@ -157,7 +224,12 @@ test("internal model-routing telemetry is suppressed only on external iMessage d
   assert.equal(isInternalModelRoutingNotice(`  ${cleared}  `), true);
   assert.equal(isInternalModelRoutingNotice("We discussed model fallback behavior."), false);
   assert.equal(isInternalModelRoutingNotice(`For reference: ${active}`), false);
-  assert.equal(isInternalModelRoutingNotice(`${active}\nHere is the answer.`), false);
+  const flattened = "Model Fallback: anthropic/claude-opus-4-8 (selected lmstudio/qwen/qwen3.6-35b-a3b; timeout)";
+  assert.equal(isInternalModelRoutingNotice(flattened), true);
+  assert.equal(isInternalModelRoutingNotice(`${flattened}\nThis is a shared, public-safe space.`), true);
+  assert.equal(stripInternalModelRoutingNotice(`${flattened}\nHere is the answer.`), "Here is the answer.");
+  assert.equal(isPublicSafeDeflection("This is a shared, public-safe space / ask Alan directly"), true);
+  assert.equal(isPublicSafeDeflection("Tuesday AT&T cutover is still on track."), false);
 
   assert.equal(shouldSuppressInternalModelRoutingPayload({
     channel: "imessage",
@@ -272,6 +344,7 @@ test("all structured runtime telemetry stays private and errors become provider-
 
 test("installed OpenClaw runtime resolves deny wildcard as deny-all", async () => {
   const dist = "/opt/homebrew/lib/node_modules/openclaw/dist";
+  if (!fs.existsSync(dist)) return;
   const matchers = fs.readdirSync(dist).filter((name) => /^tool-policy-match-.*\.js$/.test(name));
   const runtimes = [];
   for (const matcher of matchers) {
@@ -358,6 +431,7 @@ test("resolved Contacts name is run-bound data and Alan is not assumed to be the
   assert.doesNotMatch(senderSystemContext(resolved), /\+1555/);
   const sharedPrompt = sharedAudienceSystemPrompt(resolved);
   assert.match(sharedPrompt, /deliberately isolated public conversation context/);
+  assert.equal(isVipDirectContext(resolved), false);
   assert.match(sharedPrompt, /current_sender_name: "Janet Cummings"/);
   assert.doesNotMatch(sharedPrompt, /\+1555/);
   assert.equal(senderIsolationApplied(sharedPrompt, resolved), true);
@@ -543,6 +617,27 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.equal(senderIsolationApplied(groupPrompt, group), true);
 });
 
+test("ISTS/VIP directs are not a shared public-safe space and stay in Rico's voice", () => {
+  const jeff = {
+    ...contact,
+    target: "+18148814454",
+    displayName: "Jeff Roach",
+    vip: true,
+  };
+  const event = { channel: "imessage", senderId: "+18148814454", isGroup: false, content: "You around?" };
+  const resolved = resolveSenderContext(event, {}, policy([jeff]));
+  assert.equal(resolved.vip, true);
+  assert.equal(isVipDirectContext(resolved), true);
+  const prompt = vipDirectSystemPrompt(resolved);
+  assert.match(prompt, /private one-to-one iMessage with an approved ISTS\/VIP contact/);
+  assert.match(prompt, /Rico remains the speaker/);
+  assert.match(prompt, /Do not tell the current speaker to ask Alan/);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/);
+  assert.doesNotMatch(prompt, /shared-audience/);
+  assert.equal(senderIsolationApplied(prompt, resolved), true);
+  assert.equal(senderIsolationApplied(sharedAudienceSystemPrompt(resolved), resolved), false);
+});
+
 test("owner, approved contact, group participant, and unknown sender contexts stay distinct", () => {
   const owner = { ...contact, target: "+15550000001", access: "owner", displayName: "Alan Rosa" };
   const janet = { ...contact, displayName: "Janet Cummings" };
@@ -725,13 +820,15 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.7");
+  assert.equal(manifest.version, "0.5.8");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.7";/u);
+  assert.match(source, /const guardVersion = "0\.5\.8";/u);
+  assert.match(source, /failing open for outbound iMessage/u);
+  assert.match(source, /resolveOutboundIdentity/u);
   const replyPayloadHook = source.slice(source.indexOf('api.on("reply_payload_sending"'), source.indexOf('api.on("message_sending"'));
   const messageHook = source.slice(source.indexOf('api.on("message_sending"'));
   assert.match(replyPayloadHook, /disposition\.replacement \?\? RICO_GENERIC_RUNTIME_ERROR/u);
-  assert.match(messageHook, /internalEscalationMetadataReason\(event\.content\)/u);
+  assert.match(messageHook, /internalEscalationMetadataReason\(stripped\)/u);
   assert.match(messageHook, /RICO_ESCALATION_SAFE_REPLY/u);
 });
 

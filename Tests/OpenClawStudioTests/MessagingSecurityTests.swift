@@ -400,6 +400,46 @@ struct MessagingSecurityTests {
         #expect(RicoNativePolicyProjection.canonicalSharedBindingTarget("group:chat_id:42") == "group:42")
     }
 
+    @Test("ISTS/VIP directs bind to the Claude-pinned rico-vip agent")
+    func vipDirectRouting() throws {
+        let jeff = RicoRecipientPolicy(
+            id: "jeff", contactID: "jeff", displayName: "Jeff Roach",
+            address: "+18148814454", access: .approved, requireMention: true,
+            autoReply: true, quietStart: 22, quietEnd: 8, groupChatID: nil,
+            vip: true, directChatId: 321
+        )
+        let janet = RicoRecipientPolicy(
+            id: "janet", contactID: "janet", displayName: "Janet Cummings",
+            address: "+15550000002", access: .approved, requireMention: true,
+            autoReply: true, quietStart: 0, quietEnd: 0, groupChatID: nil
+        )
+        #expect(RicoNativePolicyProjection.isVipDirectPolicy(jeff))
+        #expect(!RicoNativePolicyProjection.isVipDirectPolicy(janet))
+        let agents = RicoNativePolicyProjection.configuredAgents(
+            existing: [],
+            mainWorkspace: "/private/main",
+            sharedWorkspace: "/private/shared",
+            vipWorkspace: "/private/vip"
+        )
+        #expect(agents.map { $0["id"] as? String } == ["main", "rico-shared", "rico-vip"])
+        let vip = try #require(agents.first { ($0["id"] as? String) == "rico-vip" })
+        #expect(vip["workspace"] as? String == "/private/vip")
+        let model = try #require(vip["model"] as? [String: Any])
+        #expect(model["primary"] as? String == RicoNativePolicyProjection.requiredVipModel)
+        #expect((model["fallbacks"] as? [String])?.isEmpty == true)
+
+        let bindings = RicoNativePolicyProjection.configuredSharedBindings(
+            existing: [],
+            activeTargets: ["direct:+18148814454", "direct:+15550000002"],
+            managedTargets: ["direct:+18148814454", "direct:+15550000002"],
+            vipTargets: ["direct:+18148814454"]
+        )
+        let jeffBinding = try #require(bindings.first { RicoNativePolicyProjection.bindingTargetKey($0) == "direct:+18148814454" })
+        let janetBinding = try #require(bindings.first { RicoNativePolicyProjection.bindingTargetKey($0) == "direct:+15550000002" })
+        #expect(jeffBinding["agentId"] as? String == RicoNativePolicyProjection.vipAgentID)
+        #expect(janetBinding["agentId"] as? String == "rico-shared")
+    }
+
     @Test("Shared Rico route skips an unavailable default and preserves verified fallback order")
     func sharedModelRouteUsesVerifiedDefaultCandidates() throws {
         let defaults: [String: Any] = [
@@ -577,6 +617,20 @@ struct MessagingSecurityTests {
         #expect(agents.contains("The only permitted tool is the guard-gated `rico_stuck_question_escalate`"))
         #expect(agents.contains("No other tools, external actions, commitments, or cross-channel sends are permitted here."))
         #expect(!agents.contains("rico_group_email_execute"))
+    }
+
+    @Test("VIP workspace is a private ISTS direct, not a public-safe space")
+    func vipWorkspaceFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rico-vip-workspace-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(try RicoVipWorkspace.ensureInstalled(in: root) == root.path)
+        #expect(permissions(root) == 0o700)
+        let agents = try String(contentsOf: root.appendingPathComponent("AGENTS.md"), encoding: .utf8)
+        #expect(agents.contains("private one-to-one iMessage"))
+        #expect(agents.contains("Rico remains the speaker"))
+        #expect(agents.contains("rico_stuck_question_escalate"))
+        #expect(!agents.localizedCaseInsensitiveContains("public-safe"))
+        #expect(!agents.localizedCaseInsensitiveContains("ask Alan directly"))
     }
 
     @Test("Owner route installs as an exact private imsg executable")
