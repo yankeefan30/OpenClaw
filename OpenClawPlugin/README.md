@@ -1,11 +1,21 @@
 # Rico Recipient Guard
 
-This Gateway plugin is the enforcement boundary for Rico iMessage traffic. It
-claims inbound messages unless the exact sender/group, mention, auto-reply,
-participant, pause, and quiet-hours policy passes. It cancels outbound delivery
-unless the exact phone/email/group target is approved in OpenClaw Studio or a
-matching single-use, short-lived owner grant exists. Missing, unreadable, or
-overly permissive policy files fail closed.
+Outbound security is one product: **do not text unknown numbers**. Approved,
+trusted, owner, and already-`allowFrom` people always send. Missing grants,
+policy-read throws, quiet hours, and `event.to` chat_id mismatches must not
+drop a send to someone already on the list. Strangers still fail closed.
+
+Direct iMessage turns are private one-to-one conversations. They are not a
+shared public-safe group. Rico answers or escalates through the stuck-question
+mailbox. He never says “ask Alan directly.” VIP directs start Claude via
+`rico-vip-route`. `Model Fallback:` / timeout telemetry is stripped or
+cancelled before iMessage delivery.
+
+Inbound still ignores unknown senders. Quiet hours no longer apply to
+approved/trusted/owner people. Owner grants may still be consumed so leftovers
+do not linger; they are never required.
+
+Guard 0.5.8 is the thin-repair contract. See `docs/RICO_BRINGUP.md`.
 
 For each admitted iMessage turn, the guard binds the exact sender to the
 Gateway run ID and injects a minimal trusted sender block before prompt build.
@@ -16,8 +26,8 @@ is blocked before model execution. Group membership is read back from Messages
 before inbound processing and again before delivery; any change pauses that
 group until it is explicitly reviewed in Studio.
 
-Every non-owner direct message and every group turn receives a fully replaced,
-public-only system prompt. Shared audiences are deny-all except that one exact
+Approved VIP directs receive a private one-to-one system prompt. Group turns
+still receive a fully replaced public-only system prompt. Shared audiences are deny-all except that one exact
 reviewed owner in one exact approved group may receive the single
 `rico_group_email_execute` tool after current group membership, private
 profile state, and Outlook health are all re-proved. The tool accepts opaque
@@ -53,7 +63,7 @@ resolution, but only an exact verified owner/group `before_tool_call` can mint
 that execution grant; owner-direct, non-owner, and unproved calls remain
 blocked.
 
-Guard 0.5.7 also applies a deterministic last-mile iMessage filter to the
+Guard 0.5.8 also applies a deterministic last-mile iMessage filter to the
 escalation handoff's exact `rico_<timestamp>_<digest>` request IDs, fixed tool
 name, and complete internal result envelopes. Matching content is replaced by
 a short provider-neutral verification reply before recipient enforcement.
@@ -81,7 +91,9 @@ openclaw plugins install --force "/Applications/OpenClaw Studio.app/Contents/Res
 openclaw plugins enable rico-recipient-guard
 openclaw config set plugins.entries.rico-recipient-guard.hooks.allowConversationAccess true
 openclaw config set plugins.entries.rico-recipient-guard.hooks.allowPromptInjection true
-openclaw gateway restart
+openclaw plugins install --force "/Applications/OpenClaw Studio.app/Contents/Resources/RicoVipRoute"
+openclaw plugins enable rico-vip-route
+# Polar brings the gateway up only after QA. See docs/RICO_BRINGUP.md.
 ```
 
 After restart, `rico.recipient.status` (operator.read) reports only the guard

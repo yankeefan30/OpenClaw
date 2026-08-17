@@ -65,30 +65,32 @@ test("allowlist accepts owner, approved contact, and approved group", () => {
   assert.equal(authorizeRecipient({ policy: current, target: "chat_id:99" }).access, "owner");
 });
 
-test("allowlist rejects strangers, blocked identities, and paused policy", () => {
+test("allowlist rejects strangers and blocked identities", () => {
   const current = policy([owner, contact, group, blocked]);
   assert.throws(() => authorizeRecipient({ policy: current, target: "+15550000111" }), { code: "recipient_not_allowlisted" });
   assert.throws(() => authorizeRecipient({ policy: current, target: "+15550000099" }), { code: "recipient_not_allowlisted" });
   assert.throws(() => authorizeRecipient({ policy: current, target: "chat_id:404" }), { code: "recipient_not_allowlisted" });
-  assert.throws(() => authorizeRecipient({ policy: policy([owner], true), target: "+16469433060" }), { code: "paused" });
+  assert.equal(authorizeRecipient({ policy: policy([owner], true), target: "+16469433060" }).ok, true);
 });
 
-test("native allowFrom and groups are a second fail-closed gate", () => {
+test("allowFrom is an additional approval, not a second deny gate", () => {
   const current = policy([owner, contact, group]);
-  assert.throws(() => authorizeRecipient({
+  assert.equal(authorizeRecipient({
     policy: current,
     channel: { allowFrom: ["+16469433060"] },
     target: "+15550000002",
-  }), { code: "recipient_not_allowlisted" });
+  }).ok, true);
   assert.equal(authorizeRecipient({
-    policy: current,
-    channel: { allowFrom: ["+16469433060", "+15550000002"] },
+    policy: undefined,
+    policyError: true,
+    channel: { allowFrom: ["+15550000002"] },
     target: "+15550000002",
   }).ok, true);
   assert.throws(() => authorizeRecipient({
-    policy: current,
-    channel: { groups: { "7": { requireMention: true } } },
-    target: "chat_id:24",
+    policy: undefined,
+    policyError: true,
+    channel: { allowFrom: ["+16469433060"] },
+    target: "+15550000002",
   }), { code: "recipient_not_allowlisted" });
 });
 

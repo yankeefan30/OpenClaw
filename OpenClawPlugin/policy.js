@@ -3,6 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { escalationCapabilityPromptSection } from "./escalation-guard.js";
 import { RICO_RESEARCH_SYSTEM_POLICY } from "./research-policy.js";
+import { isVipDirectAudience } from "./vip-route.js";
+
+export const APPROVED_OUTBOUND_ACCESS = new Set(["approved", "trusted", "owner"]);
 
 function chatRows(value) {
   if (Array.isArray(value)) return value;
@@ -69,10 +72,10 @@ export function normalize(value) {
   return digits || lower;
 }
 
-const INTERNAL_MODEL_ROUTING_NOTICE_PATTERNS = [
-  /^↪\uFE0F? Model Fallback: [^\r\n]{1,1000}$/u,
-  /^↪\uFE0F? Model Fallback cleared: [^\r\n]{1,1000}$/u,
-];
+const MODEL_FALLBACK_LINE_PATTERN =
+  /^(?:↪\uFE0F?\s*)?Model Fallback(?: cleared)?:[^\r\n]{0,1000}$/iu;
+const FORBIDDEN_SHRUG_PATTERN =
+  /\bask Alan directly\b|public-safe (?:space|group|conversation)|shared,\s*public-safe/iu;
 
 const INTERNAL_MODEL_BACKEND_FAILURE_PATTERN =
   /^⚠️ I couldn't reach the configured model backend [^\r\n]{1,500}\. Fallback used [^\r\n]{1,500}, but it produced no visible reply\.$/u;
@@ -117,15 +120,50 @@ export function internalEscalationMetadataReason(value) {
   return hasCompletedEnvelope ? "escalation_result_envelope" : undefined;
 }
 
+export function isModelFallbackLine(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  return Boolean(text) && MODEL_FALLBACK_LINE_PATTERN.test(text);
+}
+
+export function containsModelFallbackLine(value) {
+  return String(value ?? "").normalize("NFKC").split(/\r?\n/u).some((line) => isModelFallbackLine(line));
+}
+
+export function stripInternalModelRoutingText(value) {
+  const text = String(value ?? "").normalize("NFKC");
+  return text.split(/\r?\n/u).filter((line) => !isModelFallbackLine(line)).join("\n").trim();
+}
+
+export function isForbiddenPublicSafeShrug(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  return Boolean(text) && text.length <= 500 && FORBIDDEN_SHRUG_PATTERN.test(text);
+}
+
 /**
- * Recognizes only OpenClaw's own one-line model-routing status notices. These
- * are operator telemetry, not assistant-authored content, and must never be
- * delivered to an external iMessage recipient. Keep this deliberately narrow
- * so ordinary discussion of models or fallback behavior is not suppressed.
+ * OpenClaw model-routing notices, with or without the leading arrow. A
+ * message is telemetry when every non-empty line is a fallback/timeout line.
+ * Ordinary discussion of models is left alone.
  */
 export function isInternalModelRoutingNotice(value) {
   const text = String(value ?? "").normalize("NFKC").trim();
-  return INTERNAL_MODEL_ROUTING_NOTICE_PATTERNS.some((pattern) => pattern.test(text));
+  if (!text) return false;
+  const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((line) => isModelFallbackLine(line));
+}
+
+export function prepareIMessageOutboundContent(value) {
+  const original = String(value ?? "");
+  const stripped = stripInternalModelRoutingText(original);
+  if (!stripped || isInternalModelRoutingNotice(original)) {
+    return { action: "cancel", reason: "model_fallback_notice" };
+  }
+  if (isForbiddenPublicSafeShrug(stripped)) {
+    return { action: "cancel", reason: "public_safe_shrug" };
+  }
+  if (stripped !== original.normalize("NFKC").trim()) {
+    return { action: "replace", content: stripped, reason: "stripped_model_fallback" };
+  }
+  return { action: "deliver", content: original };
 }
 
 export function isInternalModelBackendFailure(value) {
@@ -151,7 +189,9 @@ export function shouldSuppressInternalModelRoutingPayload(event, ctx = {}) {
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "").toLowerCase();
   const isIMessage = channel === "imessage" || sessionKey.includes(":imessage:");
   if (!isIMessage) return false;
-  return event?.payload?.isFallbackNotice === true || isInternalModelRoutingNotice(event?.payload?.text);
+  return event?.payload?.isFallbackNotice === true
+    || isInternalModelRoutingNotice(event?.payload?.text)
+    || containsModelFallbackLine(event?.payload?.text);
 }
 
 /**
@@ -171,8 +211,12 @@ export function internalRuntimePayloadDisposition(event, ctx = {}) {
   if (payload.isError === true || isInternalModelBackendFailure(payload.text)) {
     return { action: "replace", reason: "runtime_error_payload" };
   }
-  if (payload.isFallbackNotice === true || isInternalModelRoutingNotice(payload.text)) {
-    return { action: "cancel", reason: "model_fallback_notice" };
+  if (payload.isFallbackNotice === true || isInternalModelRoutingNotice(payload.text) || containsModelFallbackLine(payload.text)) {
+    const stripped = stripInternalModelRoutingText(payload.text);
+    if (!stripped || isForbiddenPublicSafeShrug(stripped)) {
+      return { action: "cancel", reason: "model_fallback_notice" };
+    }
+    return { action: "replace", reason: "stripped_model_fallback", replacement: stripped };
   }
   if (payload.isCompactionNotice === true) return { action: "cancel", reason: "compaction_notice" };
   if (payload.isStatusNotice === true) return { action: "cancel", reason: "runtime_status_notice" };
@@ -510,6 +554,28 @@ export function istsIncidentPromptSection(context) {
   return section;
 }
 
+export function approvedDirectSystemPrompt(context) {
+  const incidentContext = istsIncidentPromptSection(context);
+  const escalationCapability = escalationCapabilityPromptSection(context);
+  const reviewedPersonContext = typeof context?.reviewedPersonContext === "string"
+    ? context.reviewedPersonContext
+    : "";
+  return [
+    "You are Rico, Alan Rosa's AI representative in a private iMessage direct message.",
+    senderSystemContext(context),
+    "This is a private one-to-one conversation. It is not a group and not a shared public-safe space.",
+    reviewedPersonContext,
+    incidentContext,
+    "Answer the current speaker. If a fact is missing or unverified, escalate through the stuck-question mailbox. Never tell them to ask Alan. Never say ask Alan directly. Never shrug with a public-safe disclaimer.",
+    RICO_RESEARCH_SYSTEM_POLICY,
+    escalationCapability,
+    escalationCapability
+      ? "The stuck-question handoff is available in this private direct. Do not invent an answer when that handoff can verify the missing point."
+      : "If you cannot answer reliably, say you are verifying it. Never tell the person to ask Alan.",
+    "Respond briefly and naturally for iMessage. Never begin a reply with @rico.",
+  ].filter(Boolean).join("\n\n");
+}
+
 export function sharedAudienceSystemPrompt(context) {
   const personality = groupPersonalityPromptSection(context);
   const incidentContext = istsIncidentPromptSection(context);
@@ -547,23 +613,25 @@ export function sharedAudienceSystemPrompt(context) {
   ].filter(Boolean).join("\n\n");
 }
 
+function systemPromptMatchesExpected(applied, expected) {
+  if (applied === expected) return true;
+  const modelIdentity = /^Current model identity: [^\r\n]{1,200}\. If asked what model you are, answer with this value for the current run\.$/u;
+  if (applied.startsWith(`${expected}\n\n`) && modelIdentity.test(applied.slice(expected.length + 2))) return true;
+  const cacheBoundary = "\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n\n";
+  return applied.startsWith(`${expected}${cacheBoundary}`) &&
+    modelIdentity.test(applied.slice(expected.length + cacheBoundary.length));
+}
+
 export function senderIsolationApplied(systemPrompt, context) {
   if (!context) return false;
   const applied = String(systemPrompt ?? "");
   if (context.isOwner === true && context.conversationType === "direct") {
     return applied.includes(senderSystemContext(context));
   }
-  const expected = sharedAudienceSystemPrompt(context);
-  if (applied === expected) return true;
-  // OpenClaw may append only this host-owned model identity note after a full
-  // systemPrompt replacement. Reject every prefix and every other suffix so a
-  // private bootstrap or another plugin context cannot coexist with a shared
-  // audience turn.
-  const modelIdentity = /^Current model identity: [^\r\n]{1,200}\. If asked what model you are, answer with this value for the current run\.$/u;
-  if (applied.startsWith(`${expected}\n\n`) && modelIdentity.test(applied.slice(expected.length + 2))) return true;
-  const cacheBoundary = "\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n\n";
-  return applied.startsWith(`${expected}${cacheBoundary}`) &&
-    modelIdentity.test(applied.slice(expected.length + cacheBoundary.length));
+  if (isVipDirectAudience(context)) {
+    return systemPromptMatchesExpected(applied, approvedDirectSystemPrompt(context));
+  }
+  return systemPromptMatchesExpected(applied, sharedAudienceSystemPrompt(context));
 }
 
 function exactCorrelatedValue(...inputs) {
@@ -858,7 +926,9 @@ export function evaluateInbound(event, ctx, policy, now = new Date()) {
 
   if (identity.access === "blocked") return { allow: false, reason: "Identity is blocked." };
   if (identity.autoReply !== true) return { allow: false, reason: "Automatic replies are disabled." };
-  if (!owner && quietNow(identity, now)) return { allow: false, reason: "Identity is inside configured quiet hours." };
+  if (!APPROVED_OUTBOUND_ACCESS.has(identity.access) && quietNow(identity, now)) {
+    return { allow: false, reason: "Identity is inside configured quiet hours." };
+  }
   const mentionRequired = identity.requireMention === true && !(owner && event.isGroup !== true);
   if (mentionRequired && !containsRicoMention(event)) {
     return { allow: false, reason: "A Rico mention is required." };
@@ -874,14 +944,149 @@ export function outboundIdentity(policy, target) {
   if (!expected.startsWith("chat_id:")) return undefined;
   const chatId = Number(expected.slice("chat_id:".length));
   if (!Number.isSafeInteger(chatId) || chatId <= 0) return undefined;
-  const owners = policy.identities.filter((item) =>
+  const mapped = policy.identities.filter((item) =>
     item && typeof item === "object"
     && item.kind === "individual"
-    && item.access === "owner"
-    && item.autoReply === true
+    && APPROVED_OUTBOUND_ACCESS.has(item.access)
     && Number(item.directChatId) === chatId
   );
-  if (owners.length === 1) return owners[0];
-  if (owners.length > 1) return { kind: "ambiguous", target: expected, access: "blocked" };
+  if (mapped.length === 1) return mapped[0];
+  if (mapped.length > 1) return { kind: "ambiguous", target: expected, access: "blocked" };
   return undefined;
+}
+
+export function createApprovedTargetMemory() {
+  const targets = new Set();
+  const remember = (value) => {
+    const normalized = normalize(value);
+    if (normalized) targets.add(normalized);
+  };
+  return {
+    remember,
+    rememberPolicy(policy) {
+      if (!policy || !Array.isArray(policy.identities)) return;
+      for (const identity of policy.identities) {
+        if (!identity || !APPROVED_OUTBOUND_ACCESS.has(identity.access)) continue;
+        remember(identity.target);
+        if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+          remember(`chat_id:${identity.directChatId}`);
+        }
+      }
+    },
+    has(value) {
+      return targets.has(normalize(value));
+    },
+    values() {
+      return [...targets];
+    },
+    clear() {
+      targets.clear();
+    },
+  };
+}
+
+export function outboundTargetCandidates(event = {}, ctx = {}, senderContext) {
+  const values = [];
+  const push = (value) => {
+    if (value != null && String(value).trim()) values.push(String(value));
+  };
+  push(event.to);
+  push(event.recipient);
+  push(event.conversationId);
+  push(ctx.to);
+  push(ctx.conversationId);
+  push(ctx.chatId);
+  push(senderContext?.senderHandle);
+  const sessionKey = String(event.sessionKey ?? ctx.sessionKey ?? "");
+  const direct = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
+  if (direct) push(direct[1]);
+  return [...new Set(values.map((value) => normalize(value)).filter(Boolean))];
+}
+
+export function authorizeOutboundSend({
+  target,
+  candidates = [],
+  policy,
+  policyError = false,
+  allowFrom = [],
+  knownApproved = [],
+} = {}) {
+  const approved = new Set();
+  const add = (value) => {
+    const normalized = normalize(value);
+    if (normalized) approved.add(normalized);
+  };
+  for (const item of allowFrom) add(item);
+  for (const item of knownApproved) add(item);
+  if (policy && Array.isArray(policy.identities)) {
+    for (const identity of policy.identities) {
+      if (!identity || !APPROVED_OUTBOUND_ACCESS.has(identity.access)) continue;
+      add(identity.target);
+      if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+        add(`chat_id:${identity.directChatId}`);
+      }
+    }
+  }
+
+  const probes = [...new Set([target, ...candidates].map((value) => normalize(value)).filter(Boolean))];
+  for (const probe of probes) {
+    if (approved.has(probe)) {
+      return { allow: true, reason: policyError ? "approved_fail_open" : "approved_identity", target: probe };
+    }
+    if (policy) {
+      const identity = outboundIdentity(policy, probe);
+      if (identity && APPROVED_OUTBOUND_ACCESS.has(identity.access)) {
+        return { allow: true, reason: "approved_identity", target: probe, identity };
+      }
+    }
+  }
+
+  return { allow: false, reason: "stranger" };
+}
+
+/**
+ * The entire outbound security product: deny strangers, always send to
+ * approved/VIP/owner/allowFrom people. Grants are never required. A policy
+ * read throw fails open when the target is already known-approved.
+ */
+export function decideIMessageSend({
+  event = {},
+  ctx = {},
+  policy,
+  policyError = false,
+  allowFrom = [],
+  knownApproved = [],
+  grantsDirectory,
+  senderContext,
+} = {}) {
+  const contentDecision = prepareIMessageOutboundContent(event.content ?? event.payload?.text ?? "");
+  if (contentDecision.action === "cancel") {
+    return { allow: false, cancel: true, reason: contentDecision.reason };
+  }
+  const outboundContent = contentDecision.content ?? event.content;
+
+  const decision = authorizeOutboundSend({
+    target: event.to,
+    candidates: outboundTargetCandidates(event, ctx, senderContext),
+    policy,
+    policyError,
+    allowFrom,
+    knownApproved,
+  });
+  if (!decision.allow) {
+    return { allow: false, cancel: true, reason: "stranger" };
+  }
+  if (grantsDirectory) {
+    try {
+      consumeOwnerAuthorization(grantsDirectory, decision.target, outboundContent);
+    } catch {
+      // Grants are optional cleanup, never a send gate.
+    }
+  }
+  return {
+    allow: true,
+    reason: decision.reason,
+    target: decision.target,
+    content: contentDecision.action === "replace" ? outboundContent : undefined,
+  };
 }

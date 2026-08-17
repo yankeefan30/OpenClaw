@@ -463,9 +463,10 @@ test("recipient guard consumes the provider before constructing the shared promp
   const providerCall = source.indexOf("istsIncidentPrompts.contextForTurn");
   const contextBinding = source.indexOf("istsIncidentContext: section", providerCall);
   const sharedPrompt = source.indexOf("sharedAudienceSystemPrompt(senderContext)", contextBinding);
+  const directPrompt = source.indexOf("approvedDirectSystemPrompt(senderContext)", contextBinding);
   assert.ok(providerCall > 0, "before_prompt_build must call the ISTS provider");
   assert.ok(contextBinding > providerCall, "reviewed output must be bound to the trusted sender context");
-  assert.ok(sharedPrompt > contextBinding, "the shared prompt must consume the bound context");
+  assert.ok(sharedPrompt > contextBinding || directPrompt > contextBinding, "the prompt builder must consume the bound context");
   assert.match(source, /isISTSGroupCandidate/u);
   assert.match(source, /verifyGroupMembership[\s\S]+istsIncidentPrompts\.contextForTurn/u);
   assert.match(source, /admissionDecision\?\.allow === true[\s\S]+recipientGuardAdmitted:\s*true/u);

@@ -56,13 +56,31 @@ export async function callTool(runtime, name, args) {
   }
 }
 
+function loadRecipientAuthorization(runtime, target) {
+  let policy = runtime.policy;
+  let policyError = false;
+  if (!policy) {
+    try {
+      policy = loadPolicy(runtime.policyPath, runtime.supportDirectory);
+    } catch {
+      policyError = true;
+    }
+  }
+  const channel = runtime.channel ?? imessageChannelFromConfig(runtime.config ?? {});
+  return authorizeRecipient({
+    policy,
+    policyError,
+    channel,
+    target,
+    knownApproved: runtime.knownApproved,
+  });
+}
+
 export async function sendIMessage(runtime, args) {
   const to = parseSendTarget(args?.to);
   const text = sanitizeText(args?.text);
   const idempotencyKey = sanitizeIdempotency(args?.idempotencyKey);
-  const policy = runtime.policy ?? loadPolicy(runtime.policyPath, runtime.supportDirectory);
-  const channel = runtime.channel ?? imessageChannelFromConfig(runtime.config ?? {});
-  const authorized = authorizeRecipient({ policy, channel, target: to });
+  const authorized = loadRecipientAuthorization(runtime, to);
   if (typeof runtime.gateway?.sendIMessage !== "function") {
     throw fail("send_failed", "Gateway send is unavailable.");
   }
@@ -107,9 +125,7 @@ export async function health(runtime) {
 
 export function canSend(runtime, args) {
   const to = parseSendTarget(args?.to);
-  const policy = runtime.policy ?? loadPolicy(runtime.policyPath, runtime.supportDirectory);
-  const channel = runtime.channel ?? imessageChannelFromConfig(runtime.config ?? {});
-  const authorized = authorizeRecipient({ policy, channel, target: to });
+  const authorized = loadRecipientAuthorization(runtime, to);
   return {
     ok: true,
     allowed: true,

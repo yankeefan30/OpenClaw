@@ -1761,7 +1761,7 @@ enum RicoSharedWorkspace {
 /// reports it as applied.
 enum RicoNativePolicyProjection {
     static let requiredDMScope = "per-account-channel-peer"
-    static let requiredGuardVersion = "0.5.7"
+    static let requiredGuardVersion = "0.5.8"
     static let requiredGuardContract = "rico-recipient-guard/v6"
     static let recipientGuardPluginID = "rico-recipient-guard"
     static let groupEmailToolName = "rico_group_email_execute"

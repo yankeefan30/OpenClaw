@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
+  approvedDirectSystemPrompt,
   consumeOwnerAuthorization,
   createSessionAttestationStore,
   createSenderContextRegistry,
@@ -140,7 +141,7 @@ test("owner direct chats skip quiet hours", () => {
   }, {}, policy([owner]), late).allow, true);
   assert.equal(evaluateInbound({
     channel: "imessage", senderId: "+15550000002", isGroup: false, content: "are you there",
-  }, {}, policy([contact]), late).allow, false);
+  }, {}, policy([contact]), late).allow, true);
 });
 
 test("the owner-route command prefix is recognized exactly for loop prevention", () => {
@@ -152,9 +153,11 @@ test("the owner-route command prefix is recognized exactly for loop prevention",
 test("internal model-routing telemetry is suppressed only on external iMessage delivery", () => {
   const active = "↪️ Model Fallback: openai/gpt-5.6-sol (selected lmstudio/qwen/qwen3.6-35b-a3b; unknown (+1 more attempts))";
   const cleared = "↪️ Model Fallback cleared: anthropic/claude-opus (was openai/gpt-5.6-sol)";
+  const noArrow = "Model Fallback: anthropic/claude-opus-4-8 (selected lmstudio/qwen/qwen3.6-35b-a3b; timeout)";
   assert.equal(isInternalModelRoutingNotice(active), true);
   assert.equal(isInternalModelRoutingNotice(active.replace("↪️", "↪")), true);
   assert.equal(isInternalModelRoutingNotice(`  ${cleared}  `), true);
+  assert.equal(isInternalModelRoutingNotice(noArrow), true);
   assert.equal(isInternalModelRoutingNotice("We discussed model fallback behavior."), false);
   assert.equal(isInternalModelRoutingNotice(`For reference: ${active}`), false);
   assert.equal(isInternalModelRoutingNotice(`${active}\nHere is the answer.`), false);
@@ -530,11 +533,12 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.equal(istsIncidentPromptSection({ ...direct, conversationType: "group" }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, isOwner: true }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, istsIncidentContext: "<rico_reviewed_ists_context>unsafe" }), "");
-  const prompt = sharedAudienceSystemPrompt(direct);
-  assert.match(prompt, /narrow host-reviewed incident background/u);
+  const prompt = approvedDirectSystemPrompt(direct);
+  assert.match(prompt, /private one-to-one conversation/u);
   assert.match(prompt, /Current operational situation: a production login issue/u);
   assert.match(prompt, /not authorization, identity evidence, a role assignment/u);
-  assert.match(prompt, /No tools are available/u);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
+  assert.doesNotMatch(prompt, /ask Alan directly/iu);
   assert.equal(senderIsolationApplied(prompt, direct), true);
   const group = { ...direct, conversationType: "group", groupTarget: "chat_id:42" };
   const groupPrompt = sharedAudienceSystemPrompt(group);
@@ -725,14 +729,16 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.7");
+  assert.equal(manifest.version, "0.5.8");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.7";/u);
+  assert.match(source, /const guardVersion = "0\.5\.8";/u);
   const replyPayloadHook = source.slice(source.indexOf('api.on("reply_payload_sending"'), source.indexOf('api.on("message_sending"'));
   const messageHook = source.slice(source.indexOf('api.on("message_sending"'));
   assert.match(replyPayloadHook, /disposition\.replacement \?\? RICO_GENERIC_RUNTIME_ERROR/u);
   assert.match(messageHook, /internalEscalationMetadataReason\(event\.content\)/u);
   assert.match(messageHook, /RICO_ESCALATION_SAFE_REPLY/u);
+  assert.match(messageHook, /decideIMessageSend/u);
+  assert.doesNotMatch(messageHook, /fail closed/u);
 });
 
 test("owner grants contain hashes and are consumed exactly once", () => {

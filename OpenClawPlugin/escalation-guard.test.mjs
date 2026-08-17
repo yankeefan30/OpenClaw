@@ -20,7 +20,7 @@ import {
   RICO_SHARED_AGENT_ID,
   RICO_SHARED_WORKSPACE,
 } from "./escalation-guard.js";
-import { sharedAudienceSystemPrompt } from "./policy.js";
+import { approvedDirectSystemPrompt, sharedAudienceSystemPrompt } from "./policy.js";
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
@@ -130,9 +130,13 @@ test("shared prompt gives the fixed stuck-question handoff without granting gene
   assert.match(section, /Rico remains the speaker/u);
   assert.match(section, /Never reveal or mention the request ID, research bench, internal handoff, files, paths/u);
 
-  const prompt = sharedAudienceSystemPrompt(context);
+  const prompt = approvedDirectSystemPrompt(context);
   assert.match(prompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
-  assert.match(prompt, /No other tools or external actions are available/u);
+  assert.match(prompt, /private one-to-one conversation/u);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
+  const groupPrompt = sharedAudienceSystemPrompt({ ...context, conversationType: "group", groupTarget: "chat_id:42" });
+  assert.match(groupPrompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
+  assert.match(groupPrompt, /No other tools or external actions are available/u);
   assert.doesNotMatch(prompt, /rico_group_email_execute/u);
   assert.doesNotMatch(prompt, /\b(?:exec|apply_patch|read_file|write_file|web_search|browser)\b/u);
 

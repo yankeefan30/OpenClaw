@@ -73,7 +73,7 @@ Send is denied unless **all** of these pass:
 
 1. Target is E.164 or `chat_id:<id>` (email and other handles are rejected).
 2. `rico-recipient-guard.json` has that identity as `approved`, `trusted`, or `owner` (and is not paused).
-3. If `channels.imessage.allowFrom` is present, an E.164 must also be on that list.
+3. Native `channels.imessage.allowFrom` is an additional approval, not a second deny. An approved VIP still sends if that list is missing or incomplete.
 4. If `channels.imessage.groups` is present, a `chat_id` must also be a reviewed group key.
 
 Owner DMs (`+16469433060`) do **not** need `@rico`. iMessage **groups** still need `@rico` on inbound; this server does not change that Gateway/guard rule.
