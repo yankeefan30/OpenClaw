@@ -18,6 +18,7 @@ test("example allowlist is names-only and grants mail/calendar tools", () => {
     "lindy-cvs-mail-read",
     "lindy-cvs-mail-draft",
     "lindy-cvs-calendar",
+    "lindy-mcp",
   ]);
 });
 

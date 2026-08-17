@@ -2,8 +2,9 @@ import http from "node:http";
 import { DEFAULT_BIND_HOST, LOOPBACK_HOSTS } from "../RicoIMessageMCP/constants.mjs";
 import { extractBearer, isAllowedHostHeader } from "../RicoIMessageMCP/http-server.mjs";
 import { tokensMatch } from "../RicoIMessageMCP/secrets.mjs";
+import { randomUUID } from "node:crypto";
 import { authorizeWorkflowTool } from "./allowlist.mjs";
-import { BRIDGE_PATH, MAX_BODY_BYTES, SERVER_NAME, SERVER_VERSION } from "./constants.mjs";
+import { BRIDGE_PATH, MAX_BODY_BYTES, MCP_PATH, SERVER_NAME, SERVER_VERSION } from "./constants.mjs";
 import { BridgeError, fail, publicError } from "./errors.mjs";
 import { TOOL_CATALOG, callBridgeTool } from "./tools.mjs";
 
@@ -18,9 +19,21 @@ export function isBridgePath(pathname) {
   return pathname === BRIDGE_PATH;
 }
 
+export function isLindyMcpPath(pathname) {
+  return pathname === MCP_PATH
+    || pathname.endsWith("/lindy/mcp")
+    || pathname === "/mcp"
+    || pathname.endsWith("/mcp")
+    || pathname === "/sse"
+    || pathname.endsWith("/sse")
+    || pathname === "/lindy/sse"
+    || pathname.endsWith("/lindy/sse");
+}
+
 export function createBridgeHttpServer({
   runtime,
   allowlist,
+  mcpServer,
   token,
   host = DEFAULT_BIND_HOST,
   port,
@@ -33,6 +46,7 @@ export function createBridgeHttpServer({
     throw fail("allowlist_unavailable", "Lindy workflow allowlist is unavailable.");
   }
 
+  const sessions = new Set();
   const server = http.createServer(async (request, response) => {
     try {
       if (!isAllowedHostHeader(request.headers.host)) {
@@ -46,6 +60,10 @@ export function createBridgeHttpServer({
       }
 
       const url = new URL(request.url ?? "/", `http://${host}`);
+      if (isLindyMcpPath(url.pathname)) {
+        await handleMcp({ request, response, mcpServer, sessions });
+        return;
+      }
       if (!isBridgePath(url.pathname)) {
         sendJson(response, 404, { ok: false, error: "not_found" });
         return;
@@ -129,6 +147,70 @@ export function createBridgeHttpServer({
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     },
   };
+}
+
+async function handleMcp({ request, response, mcpServer, sessions }) {
+  if (!mcpServer) {
+    sendJson(response, 503, { ok: false, error: "mcp_unavailable" });
+    return;
+  }
+  if (request.method === "DELETE") {
+    const session = request.headers["mcp-session-id"];
+    if (typeof session === "string") sessions.delete(session);
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+  if (request.method === "GET") {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    response.write(": connected\n\n");
+    return;
+  }
+  if (request.method !== "POST") {
+    sendJson(response, 405, { ok: false, error: "method_not_allowed" });
+    return;
+  }
+
+  const body = await readBody(request);
+  let message;
+  try {
+    message = JSON.parse(body);
+  } catch {
+    sendJson(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+    return;
+  }
+  if (Array.isArray(message)) {
+    sendJson(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32600, message: "JSON-RPC batches are not supported" } });
+    return;
+  }
+
+  const rpc = await mcpServer.handle(message);
+  if (message?.method === "initialize" && rpc?.result) {
+    const sessionId = randomUUID();
+    sessions.add(sessionId);
+    response.setHeader("Mcp-Session-Id", sessionId);
+  }
+  if (!rpc) {
+    response.writeHead(202);
+    response.end();
+    return;
+  }
+
+  const accept = String(request.headers.accept ?? "");
+  if (accept.includes("text/event-stream") && !accept.includes("application/json")) {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    response.end(`event: message\ndata: ${JSON.stringify(rpc)}\n\n`);
+    return;
+  }
+  sendJson(response, 200, rpc);
 }
 
 function normalizeRemoteAddress(address) {

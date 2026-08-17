@@ -3,10 +3,14 @@ import path from "node:path";
 import { studioSupportDirectory } from "../RicoIMessageMCP/constants.mjs";
 
 export const SERVER_NAME = "rico-lindy-bridge";
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.2.0";
 export const DEFAULT_BIND_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 18792;
 export const BRIDGE_PATH = "/lindy/local-bridge";
+export const MCP_PATH = "/lindy/mcp";
+export const MCP_WORKFLOW_ID = "lindy-mcp";
+export const MCP_PROTOCOL_VERSION = "2025-06-18";
+export const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-06-18", "2025-03-26"]);
 export const MAX_BODY_BYTES = 256 * 1024;
 
 export const BRIDGE_TOOLS = Object.freeze([

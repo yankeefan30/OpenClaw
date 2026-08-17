@@ -7,12 +7,15 @@ import {
   BRIDGE_PATH,
   BRIDGE_TOOLS,
   DEFAULT_PORT,
+  MCP_PATH,
   SERVER_NAME,
   SERVER_VERSION,
   defaultAllowlistPath,
   defaultTokenPath,
 } from "./constants.mjs";
+import { assertOriginalRicoHost } from "./host.mjs";
 import { createBridgeHttpServer } from "./http-server.mjs";
+import { RicoLindyMcpServer } from "./mcp-server.mjs";
 import { createBridgeLocalApps, defaultRuntimePaths } from "./tools.mjs";
 
 export function createRuntime(overrides = {}) {
@@ -34,10 +37,13 @@ async function main(argv = process.argv.slice(2)) {
       server: SERVER_NAME,
       version: SERVER_VERSION,
       path: BRIDGE_PATH,
+      mcpPath: MCP_PATH,
       bind: DEFAULT_BIND_HOST,
       tools: BRIDGE_TOOLS,
       imessage: "disabled",
       speaker: "lindy",
+      hostPolicy: "rico.local only",
+      funnel: "polar-flip only",
       tokenPath: defaultTokenPath(),
       allowlistPath: defaultAllowlistPath(),
       networkCallsPerformed: 0,
@@ -55,23 +61,28 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  assertOriginalRicoHost();
   const tokenPath = tokenPathFromEnv();
   const tokenResult = ensureBearerTokenFile(tokenPath);
   const token = readBearerToken(tokenResult.path);
   const allowlist = loadWorkflowAllowlist(allowlistPathFromEnv());
   const host = DEFAULT_BIND_HOST;
   const port = portFromEnv();
+  const runtime = createRuntime();
   const http = createBridgeHttpServer({
-    runtime: createRuntime(),
+    runtime,
     allowlist,
+    mcpServer: new RicoLindyMcpServer({ runtime, allowlist }),
     token,
     host,
     port,
   });
   const address = await http.listen();
   process.stdout.write(`Rico Lindy local bridge listening on http://${host}:${address.port}${BRIDGE_PATH}\n`);
+  process.stdout.write(`Lindy MCP (streamable HTTP) on http://${host}:${address.port}${MCP_PATH}\n`);
   process.stdout.write(`Bearer token file: ${tokenResult.path}\n`);
-  process.stdout.write("Mail/calendar only. iMessage is disabled. This is not a Rico chat turn.\n");
+  process.stdout.write("Loopback only. Lindy cannot use 127.0.0.1. Polar flips Tailscale Funnel on Rico.local.\n");
+  process.stdout.write("Mail/calendar only. iMessage is disabled. Gateway stays down.\n");
 }
 
 function tokenPathFromEnv() {
@@ -95,9 +106,12 @@ function portFromEnv() {
 function usage() {
   return `Usage: node index.mjs [--selftest | --init-token]
 
-Loopback HTTP bridge for Lindy → local Outlook + Calendar.app on this Mac.
-POST ${DEFAULT_BIND_HOST}:${DEFAULT_PORT}${BRIDGE_PATH}
-Does not expose iMessage, Messages, or a general Rico chat turn.
+Loopback HTTP + streamable-HTTP MCP for Lindy → local Outlook + Calendar.app.
+Starts on original Rico.local only. Binds ${DEFAULT_BIND_HOST}:${DEFAULT_PORT}.
+REST  ${BRIDGE_PATH}
+MCP   ${MCP_PATH}
+Lindy cannot call 127.0.0.1. Polar publishes HTTPS via Tailscale Serve/Funnel.
+Does not start the OpenClaw Gateway or iMessage.
 `;
 }
 

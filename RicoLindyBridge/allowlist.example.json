@@ -25,6 +25,18 @@
     {
       "id": "lindy-cvs-calendar",
       "tools": ["health", "calendar_list", "calendar_upsert"]
+    },
+    {
+      "id": "lindy-mcp",
+      "tools": [
+        "health",
+        "outlook_list_inbox",
+        "outlook_search",
+        "outlook_get",
+        "outlook_draft",
+        "calendar_list",
+        "calendar_upsert"
+      ]
     }
   ]
 }

@@ -152,10 +152,11 @@ auto-send LaunchAgent.
 
 ## Lindy local mail/calendar bridge
 
-Lindy is the only messaging front door. Rico on the Mac Mini is a thin local
+Lindy is the only messaging front door. Rico on **Rico.local** is a thin local
 bridge for CVS Health Outlook and Calendar.app — not a speaker and not a
-general SMS agent. See [`RicoLindyBridge/README.md`](RicoLindyBridge/README.md).
-Keep `channels.imessage.enabled` false.
+general SMS agent. Lindy cannot call `127.0.0.1`; Polar publishes
+`/lindy/mcp` over Tailscale. See [`RicoLindyBridge/README.md`](RicoLindyBridge/README.md).
+Keep `channels.imessage.enabled` false. Do not apply this on Rico 2.
 
 ## Verification
 

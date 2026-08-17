@@ -13,8 +13,11 @@ test("selftest advertises the local-bridge surface and keeps iMessage off", asyn
   assert.equal(body.ok, true);
   assert.equal(body.server, "rico-lindy-bridge");
   assert.equal(body.path, "/lindy/local-bridge");
+  assert.equal(body.mcpPath, "/lindy/mcp");
   assert.equal(body.imessage, "disabled");
   assert.equal(body.speaker, "lindy");
+  assert.equal(body.hostPolicy, "rico.local only");
+  assert.equal(body.funnel, "polar-flip only");
   assert.deepEqual(body.tools, BRIDGE_TOOLS);
   assert.equal(body.tools.some((name) => FORBIDDEN_TOOLS.includes(name)), false);
   assert.equal(JSON.stringify(body).includes("18789"), false);
@@ -27,6 +30,20 @@ test("local Outlook draft helper creates a draft and never sends", () => {
   assert.match(draftFn, /was sent of newMessage/);
   assert.doesNotMatch(draftFn, /send newMessage/);
   assert.doesNotMatch(source, /rico_imessage_send/);
+});
+
+test("Tailscale scripts stay loopback and do not auto-start Funnel from the server", () => {
+  const serve = fs.readFileSync(new URL("../serve-tailnet.sh", import.meta.url), "utf8");
+  const funnel = fs.readFileSync(new URL("../funnel-lindy.sh", import.meta.url), "utf8");
+  const index = fs.readFileSync(new URL("../index.mjs", import.meta.url), "utf8");
+  assert.match(serve, /127\.0\.0\.1:18792/);
+  assert.match(funnel, /127\.0\.0\.1:18792/);
+  assert.match(funnel, /--set-path=\/lindy/);
+  assert.match(serve, /^exec tailscale serve /m);
+  assert.match(funnel, /^exec tailscale funnel /m);
+  assert.doesNotMatch(serve, /exec tailscale funnel/);
+  assert.doesNotMatch(index, /funnel-lindy|tailscale funnel|0\.0\.0\.0/);
+  assert.doesNotMatch(index, /18789/);
 });
 
 function runNode(args) {

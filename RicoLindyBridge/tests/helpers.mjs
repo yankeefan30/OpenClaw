@@ -1,6 +1,7 @@
 import { personAuthorization } from "../../RicoEmailGovernance/tests/fixtures.mjs";
 import { validateAllowlist } from "../allowlist.mjs";
 import { createBridgeHttpServer } from "../http-server.mjs";
+import { RicoLindyMcpServer } from "../mcp-server.mjs";
 
 export const TOKEN = "test-lindy-bridge-token";
 
@@ -16,6 +17,7 @@ export function exampleAllowlist(overrides = {}) {
       { id: "lindy-cvs-mail-read", tools: ["health", "outlook_list_inbox", "outlook_search", "outlook_get"] },
       { id: "lindy-cvs-mail-draft", tools: ["outlook_draft"] },
       { id: "lindy-cvs-calendar", tools: ["health", "calendar_list", "calendar_upsert"] },
+      { id: "lindy-mcp", tools: ["health", "outlook_list_inbox", "outlook_search", "outlook_get", "outlook_draft", "calendar_list", "calendar_upsert"] },
     ],
     ...overrides,
   });
@@ -95,14 +97,17 @@ export async function withServer(runtime, fn, allowlist = exampleAllowlist()) {
   const http = createBridgeHttpServer({
     runtime,
     allowlist,
+    mcpServer: new RicoLindyMcpServer({ runtime, allowlist }),
     token: TOKEN,
     host: "127.0.0.1",
     port: 0,
   });
   const address = await http.listen();
-  const base = `http://127.0.0.1:${address.port}/lindy/local-bridge`;
+  const origin = `http://127.0.0.1:${address.port}`;
+  const base = `${origin}/lindy/local-bridge`;
+  const mcp = `${origin}/lindy/mcp`;
   try {
-    return await fn(base);
+    return await fn(base, mcp);
   } finally {
     await http.close();
   }
