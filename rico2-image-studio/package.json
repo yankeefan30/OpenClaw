@@ -1,0 +1,14 @@
+{
+  "name": "rico2-image-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check tests/proxy.test.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

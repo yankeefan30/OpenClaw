@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rico 2 · Image Studio</title>
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="masthead">
+      <div class="brand">
+        <p class="eyebrow">Rico 2</p>
+        <h1>Image Studio</h1>
+      </div>
+      <div class="masthead-meta">
+        <div class="model-lockup">
+          <p class="model-name">Flux.2 Klein 4B</p>
+          <p class="model-id" id="model-id">black-forest-labs/FLUX.2-klein-4B</p>
+        </div>
+        <div class="status" id="status" data-state="checking">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-copy">
+            <strong id="status-label">Checking</strong>
+            <span id="status-detail">Asking Rico 2 for health and models</span>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <main class="bench">
+      <section class="console" aria-labelledby="prompt-label">
+        <div class="field prompt-field">
+          <div class="field-head">
+            <label id="prompt-label" for="prompt">Prompt</label>
+            <span class="field-note" id="shortcut-hint">⌘↩ generate</span>
+          </div>
+          <textarea
+            id="prompt"
+            name="prompt"
+            rows="8"
+            maxlength="4000"
+            placeholder="A still life of cut brass tools on black linen, large format, quiet light."
+            autocomplete="off"
+            spellcheck="true"
+          ></textarea>
+        </div>
+
+        <button type="button" class="generate" id="generate">
+          <span class="generate-label" id="generate-label">Generate</span>
+          <span class="generate-aside" id="generate-aside">⌘↩</span>
+        </button>
+
+        <p class="banner" id="error" hidden></p>
+
+        <div class="controls">
+          <fieldset class="sizes">
+            <legend>Size</legend>
+            <div class="segmented" role="radiogroup" aria-label="Image size">
+              <label>
+                <input type="radio" name="size" value="256x256">
+                <span>256</span>
+              </label>
+              <label>
+                <input type="radio" name="size" value="512x512" checked>
+                <span>512</span>
+              </label>
+              <label>
+                <input type="radio" name="size" value="1024x1024">
+                <span>1024</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <label class="field compact">
+            <span>Steps</span>
+            <input id="steps" type="number" min="1" max="50" value="4" inputmode="numeric">
+          </label>
+
+          <label class="field compact">
+            <span>Seed</span>
+            <input id="seed" type="number" min="0" max="2147483647" placeholder="auto" inputmode="numeric">
+          </label>
+        </div>
+
+        <p class="fine-print">
+          Generate only. Edit is not implemented. Larger sizes and more steps take longer.
+        </p>
+      </section>
+
+      <section class="stage" aria-labelledby="stage-label">
+        <div class="stage-head">
+          <h2 id="stage-label">Print</h2>
+          <p class="stage-meta" id="print-meta">No exposure yet</p>
+        </div>
+        <figure class="frame" id="frame" data-state="empty">
+          <div class="empty-copy" id="empty-copy">
+            <p class="empty-kicker">Darkroom</p>
+            <p>Write a prompt. The print appears here.</p>
+          </div>
+          <div class="exposing" id="exposing" hidden>
+            <p class="empty-kicker">Exposing</p>
+            <p id="elapsed">0.0s</p>
+          </div>
+          <img id="print" alt="" hidden>
+        </figure>
+        <div class="print-actions" id="print-actions" hidden>
+          <button type="button" class="ghost" id="download-current">Download</button>
+        </div>
+      </section>
+    </main>
+
+    <section class="gallery" aria-labelledby="gallery-label">
+      <div class="gallery-head">
+        <h2 id="gallery-label">Session</h2>
+        <p id="gallery-count">No frames</p>
+      </div>
+      <div class="strip" id="strip" role="list"></div>
+    </section>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
