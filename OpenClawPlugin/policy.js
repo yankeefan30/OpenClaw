@@ -1140,10 +1140,27 @@ const UNSOLICITED_OUTBOUND_TRIGGERS = new Set([
   "gateway_start",
   "catchup",
   "catch_up",
+  "queue",
+  "queued",
+  "flush",
+  "queue_flush",
+  "replay",
+  "backfill",
+  "agent_resume",
+  "session_start",
 ]);
 
 export function isUnsolicitedOutboundTrigger(event, ctx = {}) {
-  const values = [event?.trigger, ctx?.trigger, event?.wakeReason, ctx?.wakeReason];
+  const values = [
+    event?.trigger,
+    ctx?.trigger,
+    event?.wakeReason,
+    ctx?.wakeReason,
+    event?.origin,
+    ctx?.origin,
+    event?.source,
+    ctx?.source,
+  ];
   return values.some((value) => {
     const normalized = String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
     return UNSOLICITED_OUTBOUND_TRIGGERS.has(normalized);
@@ -1203,6 +1220,52 @@ export function conversationThreadKeys(event, ctx = {}) {
   return [...keys];
 }
 
+function firstNonempty(...values) {
+  for (const value of values) {
+    if (value != null && String(value).trim() !== "") return value;
+  }
+  return undefined;
+}
+
+/**
+ * Destination keys for an outbound send. Sender identity and a foreign
+ * session handle must not inherit another thread's inbound-this-uptime
+ * grant. Rico cannot start a thread because Alan (or anyone) wrote
+ * somewhere else this uptime.
+ */
+export function outboundDestinationThreadKeys(event = {}, ctx = {}, target) {
+  const explicitTo = firstNonempty(target, event?.to, event?.recipient, ctx?.to);
+  const chat = firstNonempty(ctx?.chatId, event?.threadId, event?.conversationId);
+  const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
+  const sessionHandle = directHandleFromSessionKey(sessionKey);
+  const explicitHandle = validSenderHandle(explicitTo);
+
+  if (explicitHandle) {
+    if (sessionHandle && sessionHandle !== explicitHandle) return [];
+    return conversationThreadKeys({ to: explicitHandle }, {});
+  }
+
+  const destEvent = { to: explicitTo };
+  const destCtx = {};
+  if (chat != null && String(chat).trim() !== "") {
+    const chatKey = /^\d+$/.test(String(chat).trim())
+      ? `chat_id:${String(chat).trim()}`
+      : normalize(chat);
+    if (explicitTo && normalize(explicitTo) !== chatKey && normalize(explicitTo) !== normalize(chat)) {
+      return [];
+    }
+    destEvent.threadId = chat;
+    destCtx.chatId = chat;
+  }
+
+  if (!explicitTo && sessionHandle) {
+    destEvent.sessionKey = sessionKey;
+    destCtx.sessionKey = sessionKey;
+  }
+
+  return conversationThreadKeys(destEvent, destCtx);
+}
+
 export function hasHumanInboundEvidence(event, ctx = {}) {
   if (isUnsolicitedOutboundTrigger(event, ctx)) return false;
   if (!exactSender(event, ctx)) return false;
@@ -1211,19 +1274,47 @@ export function hasHumanInboundEvidence(event, ctx = {}) {
   return Boolean(text || messageId);
 }
 
-function inboundUptimeAllows(inboundUptime, event, ctx = {}, extraTargets = []) {
+function inboundUptimeHasKeys(inboundUptime, keys) {
+  if (!inboundUptime || !Array.isArray(keys) || keys.length === 0) return false;
+  if (typeof inboundUptime.hasThread === "function") {
+    return keys.some((key) => {
+      if (key.startsWith("direct:")) {
+        return inboundUptime.hasThread({ to: key.slice("direct:".length) }, {});
+      }
+      return inboundUptime.hasThread({ to: key }, {});
+    });
+  }
+  const allowed = inboundUptime instanceof Set
+    ? inboundUptime
+    : new Set(Array.isArray(inboundUptime) ? inboundUptime : []);
+  return keys.some((key) => allowed.has(key));
+}
+
+function mappedDestinationAliases(policy, target) {
+  if (!policy || target == null || String(target).trim() === "") return [];
+  const identity = outboundIdentity(policy, target);
+  if (!identity || identity.kind === "group" || identity.kind === "ambiguous") return [];
+  const aliases = [];
+  const handle = validSenderHandle(identity.target);
+  if (handle) aliases.push(handle);
+  if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+    aliases.push(`chat_id:${identity.directChatId}`);
+  }
+  return aliases;
+}
+
+function inboundUptimeAllows(inboundUptime, event, ctx = {}, extra = {}) {
   if (!inboundUptime) return false;
-  const probes = [event, ...extraTargets.filter((value) => value != null && String(value).trim() !== "").map((to) => ({
-    ...event,
-    to,
-  }))];
-  return probes.some((item) => {
-    if (typeof inboundUptime.hasThread === "function") return inboundUptime.hasThread(item, ctx);
-    const allowed = inboundUptime instanceof Set
-      ? inboundUptime
-      : new Set(Array.isArray(inboundUptime) ? inboundUptime : []);
-    return conversationThreadKeys(item, ctx).some((key) => allowed.has(key));
-  });
+  const target = extra.target;
+  const keys = outboundDestinationThreadKeys(event, ctx, target);
+  const explicitTo = firstNonempty(target, event?.to, event?.recipient, ctx?.to);
+  if (explicitTo && keys.length === 0) return false;
+  const aliases = [
+    ...(Array.isArray(extra.aliases) ? extra.aliases : []),
+    ...mappedDestinationAliases(extra.policy, target ?? event?.to ?? ctx?.to),
+  ];
+  const aliasKeys = aliases.flatMap((value) => conversationThreadKeys({ to: value }, {}));
+  return inboundUptimeHasKeys(inboundUptime, [...keys, ...aliasKeys]);
 }
 
 export function createInboundUptimeLedger({ startedAt = Date.now() } = {}) {
@@ -1326,12 +1417,14 @@ export function authorizeIMessageAgentRun({
   identity,
   ownerTargets = [],
   target,
+  destinationAliases = [],
+  policy,
   bringUp = {},
 } = {}) {
   if (isUnsolicitedOutboundTrigger(event, ctx)) {
     return { allow: false, reason: "unsolicited_trigger" };
   }
-  if (!inboundUptimeAllows(inboundUptime, event, ctx)) {
+  if (!inboundUptimeAllows(inboundUptime, event, ctx, { target, aliases: destinationAliases, policy })) {
     return { allow: false, reason: "no_inbound_this_uptime" };
   }
   const audience = authorizeBringUpAudience({
@@ -1445,7 +1538,7 @@ export function authorizeOutboundSend({
   if (isUnsolicitedOutboundTrigger(outboundEvent, outboundCtx)) {
     return { allow: false, reason: "unsolicited_trigger" };
   }
-  if (!inboundUptimeAllows(inboundUptime, outboundEvent, outboundCtx, [target, ...candidates])) {
+  if (!inboundUptimeAllows(inboundUptime, outboundEvent, outboundCtx, { target, policy })) {
     return { allow: false, reason: "no_inbound_this_uptime" };
   }
 
@@ -1465,7 +1558,16 @@ export function authorizeOutboundSend({
       }
     }
   }
-  const probes = [...new Set([target, ...candidates].map((value) => normalize(value)).filter(Boolean))];
+  const destKeys = outboundDestinationThreadKeys(outboundEvent, outboundCtx, target);
+  const destProbes = destKeys.length > 0
+    ? destKeys.map((key) => key.startsWith("direct:") ? key.slice("direct:".length) : key)
+    : [];
+  const probes = [...new Set([
+    ...destProbes,
+    ...[target, outboundEvent.to, outboundEvent.recipient, outboundCtx.to]
+      .map((value) => normalize(value))
+      .filter(Boolean),
+  ])];
   for (const probe of probes) {
     const identity = policy ? outboundIdentity(policy, probe) : undefined;
     const privileged = approved.has(probe) || (identity && OUTBOUND_ACCESS.has(identity.access));

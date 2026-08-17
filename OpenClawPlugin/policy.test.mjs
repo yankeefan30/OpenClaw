@@ -11,6 +11,7 @@ import {
   colleagueGroupSystemPrompt,
   consumeOwnerAuthorization,
   conversationThreadKeys,
+  outboundDestinationThreadKeys,
   createInboundUptimeLedger,
   directHandleFromSessionKey,
   createSessionAttestationStore,
@@ -846,9 +847,9 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const gatewayRegistrations = [...source.matchAll(/api\.registerGatewayMethod\(\s*["']([^"']+)["']/g)].map((match) => match[1]);
   assert.deepEqual([...gatewayRegistrations].sort(), [...(manifest.contracts?.gatewayMethods ?? [])].sort());
   assert.deepEqual(manifest.contracts?.tools, ["rico_group_email_execute"]);
-  assert.equal(manifest.version, "0.5.10");
+  assert.equal(manifest.version, "0.5.11");
   assert.equal(packageMetadata.version, manifest.version);
-  assert.match(source, /const guardVersion = "0\.5\.10";/u);
+  assert.match(source, /const guardVersion = "0\.5\.11";/u);
   assert.match(source, /rico\.recipient\.openGeneralReplies/u);
   assert.match(source, /bring_up_owner_only/u);
   assert.match(source, /failing open for outbound iMessage/u);
@@ -867,6 +868,7 @@ test("plugin hook contract has no missing, duplicate, or undeclared registration
   const ingressHooks = source.slice(source.indexOf('api.on("inbound_claim"'), source.indexOf('api.on("before_prompt_build"'));
   assert.doesNotMatch(promptHook, /rememberHumanInbound/u);
   assert.match(ingressHooks, /rememberHumanInbound/u);
+  assert.doesNotMatch(source, /senderId = ctx\.senderId \?\? event\.senderId \?\? \(directHandleFromSessionKey/u);
 });
 
 test("default:direct is not a thread and outbound requires inbound this uptime", () => {
@@ -916,6 +918,11 @@ test("default:direct is not a thread and outbound requires inbound this uptime",
     inboundUptime,
     bringUp: { generalRepliesOpen: true },
   }).allow, true);
+  assert.deepEqual(outboundDestinationThreadKeys({
+    to: "+15555550077",
+    senderId: "+15555550001",
+    sessionKey: "agent:rico-shared:imessage:default:direct:+15555550001",
+  }, { senderId: "+15555550001", chatId: 570 }, "+15555550077"), []);
 });
 
 test("owner grants contain hashes and are consumed exactly once", () => {

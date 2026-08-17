@@ -8,6 +8,7 @@ import {
   authorizeOutboundSend,
   colleagueGroupSystemPrompt,
   conversationThreadKeys,
+  outboundDestinationThreadKeys,
   createApprovedTargetMemory,
   createInboundUptimeLedger,
   directHandleFromSessionKey,
@@ -594,4 +595,131 @@ test("QA 12: bring-up is owner-only; VIP inbound this uptime still does not send
   }).allow, true, "Alan owner DM sends while general replies stay closed");
 
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("QA 13: Alan inbound cannot start Jeff / Ana+Janet / Al threads, even after Polar opens", () => {
+  const current = policy([jeff, owner, al, janet, ana, colleagueGroup]);
+  const inboundUptime = createInboundUptimeLedger();
+  inboundUptime.rememberHumanInbound({
+    senderId: owner.target,
+    threadId: 570,
+    sessionKey: `agent:rico-shared:imessage:default:direct:${owner.target}`,
+    content: "you up?",
+    messageId: "alan-only-1",
+  }, { chatId: 570, sessionKey: `agent:rico-shared:imessage:default:direct:${owner.target}`, senderId: owner.target });
+
+  const leftoverAlan = {
+    senderId: owner.target,
+    sessionKey: `agent:rico-shared:imessage:default:direct:${owner.target}`,
+  };
+  const leftoverCtx = {
+    senderId: owner.target,
+    sessionKey: leftoverAlan.sessionKey,
+    chatId: 570,
+  };
+
+  assert.deepEqual(outboundDestinationThreadKeys({
+    ...leftoverAlan,
+    to: al.target,
+    content: "Hey Al, I'm back.",
+  }, leftoverCtx, al.target), [], "Al handle on Alan's session is a conflict, not a destination");
+  assert.deepEqual(outboundDestinationThreadKeys({
+    to: "chat_id:77",
+    sessionKey: leftoverAlan.sessionKey,
+  }, leftoverCtx, "chat_id:77"), [], "Al's chat id plus Alan's leftover chat id is a conflict");
+  assert.deepEqual(outboundDestinationThreadKeys({
+    to: "chat_id:77",
+  }, { chatId: 77 }, "chat_id:77"), ["chat_id:77"]);
+
+  for (const [label, send] of [
+    ["Al handle", {
+      target: al.target,
+      event: { ...leftoverAlan, to: al.target, content: "Hey Al, I'm back." },
+      ctx: leftoverCtx,
+    }],
+    ["Al chat", {
+      target: "chat_id:77",
+      event: { ...leftoverAlan, to: "chat_id:77", content: "Hey Al, I'm back." },
+      ctx: leftoverCtx,
+    }],
+    ["Jeff DM", {
+      target: "chat_id:9",
+      event: { ...leftoverAlan, to: "chat_id:9", content: "Hey Jeff." },
+      ctx: leftoverCtx,
+    }],
+    ["Ana+Janet group", {
+      target: "chat_id:24",
+      event: { ...leftoverAlan, to: "chat_id:24", sessionKey: "agent:rico-shared:imessage:group:24", content: "Hey all." },
+      ctx: { ...leftoverCtx, chatId: 24, sessionKey: "agent:rico-shared:imessage:group:24" },
+    }],
+  ]) {
+    assert.equal(authorizeOutboundSend({
+      ...send,
+      policy: current,
+      inboundUptime,
+      bringUp: POLAR_OPENED,
+    }).reason, "no_inbound_this_uptime", `${label}: Polar open + Alan inbound is not a send`);
+    assert.equal(authorizeIMessageAgentRun({
+      event: send.event,
+      ctx: send.ctx,
+      inboundUptime,
+      target: send.target,
+      policy: current,
+      bringUp: POLAR_OPENED,
+    }).reason, "no_inbound_this_uptime", `${label}: cannot start that thread`);
+  }
+
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:570",
+    event: { to: "chat_id:570", sessionKey: leftoverAlan.sessionKey },
+    ctx: leftoverCtx,
+    policy: current,
+    inboundUptime,
+  }).allow, true, "Alan owner DM still sends during owner-only");
+
+  inboundUptime.rememberHumanInbound({
+    senderId: al.target,
+    threadId: 77,
+    sessionKey: AL_LIVE_SESSION,
+    content: "On the 1pm flight.",
+    messageId: "al-wrote-first",
+  }, { chatId: 77, sessionKey: AL_LIVE_SESSION, senderId: al.target });
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:77",
+    event: { to: "chat_id:77", sessionKey: AL_LIVE_SESSION },
+    ctx: { chatId: 77, sessionKey: AL_LIVE_SESSION, senderId: al.target },
+    policy: current,
+    inboundUptime,
+  }).reason, "bring_up_owner_only", "Al wrote; owner-only still holds");
+  assert.equal(authorizeOutboundSend({
+    target: "chat_id:77",
+    event: { to: "chat_id:77", sessionKey: AL_LIVE_SESSION },
+    ctx: { chatId: 77, sessionKey: AL_LIVE_SESSION, senderId: al.target },
+    policy: current,
+    inboundUptime,
+    bringUp: POLAR_OPENED,
+  }).allow, true, "after Polar opens, Al inbound on that exact thread sends");
+
+  const strangerLedger = createInboundUptimeLedger();
+  strangerLedger.rememberHumanInbound({
+    senderId: "+15555550999",
+    content: "hello rico",
+    messageId: "stranger-13",
+  }, { senderId: "+15555550999" });
+  assert.equal(authorizeOutboundSend({
+    target: "+15555550999",
+    event: { to: "+15555550999" },
+    policy: current,
+    inboundUptime: strangerLedger,
+    bringUp: POLAR_OPENED,
+  }).reason, "stranger");
+
+  assert.equal(authorizeOutboundSend({
+    target: al.target,
+    event: { to: al.target, sessionKey: AL_LIVE_SESSION, trigger: "session_resume" },
+    ctx: { sessionKey: AL_LIVE_SESSION, trigger: "session_resume" },
+    policy: current,
+    inboundUptime,
+    bringUp: POLAR_OPENED,
+  }).reason, "unsolicited_trigger");
 });

@@ -14,7 +14,6 @@ import {
   colleagueGroupSystemPrompt,
   createApprovedTargetMemory,
   createInboundUptimeLedger,
-  directHandleFromSessionKey,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -94,7 +93,7 @@ const sessionAttestations = createSessionAttestationStore({
   filePath: sessionAttestationPath,
   supportDirectory: directory,
 });
-const guardVersion = "0.5.10";
+const guardVersion = "0.5.11";
 
 function bringUpState() {
   return {
@@ -132,7 +131,8 @@ function inboundEventForAgentRun(event, ctx) {
   const sessionKey = String(ctx.sessionKey ?? event.sessionKey ?? "");
   const groupMatch = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
   const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
-  const senderId = ctx.senderId ?? event.senderId ?? (directHandleFromSessionKey(sessionKey) || undefined);
+  // Session keys name a thread. They are not a sender and not inbound.
+  const senderId = ctx.senderId ?? event.senderId;
   return {
     channel: "imessage",
     senderId,
@@ -544,6 +544,7 @@ export default definePluginEntry({
         ownerDirect: senderContext?.isOwner === true && senderContext?.conversationType === "direct",
         ownerTargets: approvedTargets.ownerValues(),
         target: ctx.chatId != null ? `chat_id:${ctx.chatId}` : event.to,
+        destinationAliases: senderContext?.senderHandle ? [senderContext.senderHandle] : [],
         bringUp: bringUpState(),
       });
       if (!inboundGate.allow) {
