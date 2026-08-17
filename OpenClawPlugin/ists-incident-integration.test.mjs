@@ -462,7 +462,7 @@ test("recipient guard consumes the provider before constructing the shared promp
   const source = fs.readFileSync(path.join(directory, "index.js"), "utf8");
   const providerCall = source.indexOf("istsIncidentPrompts.contextForTurn");
   const contextBinding = source.indexOf("istsIncidentContext: section", providerCall);
-  const sharedPrompt = source.indexOf("sharedAudienceSystemPrompt(senderContext)", contextBinding);
+  const sharedPrompt = source.indexOf("colleagueGroupSystemPrompt(senderContext)", contextBinding);
   const directPrompt = source.indexOf("approvedDirectSystemPrompt(senderContext)", contextBinding);
   assert.ok(providerCall > 0, "before_prompt_build must call the ISTS provider");
   assert.ok(contextBinding > providerCall, "reviewed output must be bound to the trusted sender context");

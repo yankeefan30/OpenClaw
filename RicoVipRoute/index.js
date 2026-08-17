@@ -3,10 +3,10 @@ import { isVipDirectAudience, resolveVipDirectModel } from "./vip-route.js";
 
 function senderContextFromEvent(event, ctx) {
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
-  const direct = /:imessage:direct:/i.test(sessionKey);
+  const direct = /:imessage:(?:default:)?direct(?:$|:)/i.test(sessionKey);
   const access = String(event?.senderAccess ?? ctx?.senderAccess ?? event?.access ?? "").toLowerCase();
   return {
-    conversationType: event?.isGroup === true || sessionKey.includes(":imessage:group:")
+    conversationType: event?.isGroup === true || (sessionKey.includes(":imessage:group:") && !direct)
       ? "group"
       : direct || event?.isGroup === false
         ? "direct"

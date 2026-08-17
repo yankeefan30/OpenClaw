@@ -20,7 +20,7 @@ import {
   RICO_SHARED_AGENT_ID,
   RICO_SHARED_WORKSPACE,
 } from "./escalation-guard.js";
-import { approvedDirectSystemPrompt, sharedAudienceSystemPrompt } from "./policy.js";
+import { approvedDirectSystemPrompt, colleagueGroupSystemPrompt, sharedAudienceSystemPrompt } from "./policy.js";
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
@@ -134,9 +134,10 @@ test("shared prompt gives the fixed stuck-question handoff without granting gene
   assert.match(prompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
   assert.match(prompt, /private one-to-one conversation/u);
   assert.doesNotMatch(prompt, /deliberately isolated public conversation context/u);
-  const groupPrompt = sharedAudienceSystemPrompt({ ...context, conversationType: "group", groupTarget: "chat_id:42" });
+  const groupPrompt = colleagueGroupSystemPrompt({ ...context, conversationType: "group", groupTarget: "chat_id:42" });
   assert.match(groupPrompt, new RegExp(RICO_ESCALATION_TOOL_NAME, "u"));
-  assert.match(groupPrompt, /No other tools or external actions are available/u);
+  assert.match(groupPrompt, /known colleague group/u);
+  assert.doesNotMatch(groupPrompt, /deliberately isolated public conversation context/u);
   assert.doesNotMatch(prompt, /rico_group_email_execute/u);
   assert.doesNotMatch(prompt, /\b(?:exec|apply_patch|read_file|write_file|web_search|browser)\b/u);
 

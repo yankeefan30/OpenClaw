@@ -74,6 +74,10 @@ export function normalize(value) {
 
 const MODEL_FALLBACK_LINE_PATTERN =
   /^(?:↪\uFE0F?\s*)?Model Fallback(?: cleared)?:[^\r\n]{0,1000}$/iu;
+const GUARD_BLOCK_LINE_PATTERN =
+  /^(?:Your message could not be sent:\s*)?blocked by rico-recipient-guard\.?$/iu;
+const EMPTY_ASSISTANT_TURN_PATTERN =
+  /\[assistant turn failed before producing content\]/iu;
 const FORBIDDEN_SHRUG_PATTERN =
   /\bask Alan directly\b|public-safe (?:space|group|conversation)|shared,\s*public-safe/iu;
 
@@ -125,13 +129,26 @@ export function isModelFallbackLine(value) {
   return Boolean(text) && MODEL_FALLBACK_LINE_PATTERN.test(text);
 }
 
+export function isGuardBlockNotice(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  return Boolean(text) && GUARD_BLOCK_LINE_PATTERN.test(text);
+}
+
+export function isEmptyLocalAssistantFailure(value) {
+  return EMPTY_ASSISTANT_TURN_PATTERN.test(String(value ?? "").normalize("NFKC"));
+}
+
+export function isInternalDeliveryBannerLine(value) {
+  return isModelFallbackLine(value) || isGuardBlockNotice(value);
+}
+
 export function containsModelFallbackLine(value) {
-  return String(value ?? "").normalize("NFKC").split(/\r?\n/u).some((line) => isModelFallbackLine(line));
+  return String(value ?? "").normalize("NFKC").split(/\r?\n/u).some((line) => isInternalDeliveryBannerLine(line));
 }
 
 export function stripInternalModelRoutingText(value) {
   const text = String(value ?? "").normalize("NFKC");
-  return text.split(/\r?\n/u).filter((line) => !isModelFallbackLine(line)).join("\n").trim();
+  return text.split(/\r?\n/u).filter((line) => !isInternalDeliveryBannerLine(line) && !isEmptyLocalAssistantFailure(line)).join("\n").trim();
 }
 
 export function isForbiddenPublicSafeShrug(value) {
@@ -148,11 +165,14 @@ export function isInternalModelRoutingNotice(value) {
   const text = String(value ?? "").normalize("NFKC").trim();
   if (!text) return false;
   const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  return lines.length > 0 && lines.every((line) => isModelFallbackLine(line));
+  return lines.length > 0 && lines.every((line) => isInternalDeliveryBannerLine(line) || isEmptyLocalAssistantFailure(line));
 }
 
 export function prepareIMessageOutboundContent(value) {
   const original = String(value ?? "");
+  if (isGuardBlockNotice(original) || isEmptyLocalAssistantFailure(original)) {
+    return { action: "cancel", reason: isGuardBlockNotice(original) ? "guard_block_notice" : "empty_local_model_turn" };
+  }
   const stripped = stripInternalModelRoutingText(original);
   if (!stripped || isInternalModelRoutingNotice(original)) {
     return { action: "cancel", reason: "model_fallback_notice" };
@@ -291,7 +311,7 @@ function validPolicyIdentity(identity) {
   if (!Number.isInteger(identity.quietStart) || identity.quietStart < 0 || identity.quietStart > 23) return false;
   if (!Number.isInteger(identity.quietEnd) || identity.quietEnd < 0 || identity.quietEnd > 23) return false;
   if (Object.prototype.hasOwnProperty.call(identity, "directChatId")) {
-    if (identity.kind !== "individual" || identity.access !== "owner") return false;
+    if (identity.kind !== "individual" || !APPROVED_OUTBOUND_ACCESS.has(identity.access)) return false;
     if (!Number.isSafeInteger(identity.directChatId) || identity.directChatId <= 0) return false;
   }
   const target = normalize(identity.target);
@@ -579,6 +599,54 @@ export function approvedDirectSystemPrompt(context) {
   ].filter(Boolean).join("\n\n");
 }
 
+export const KNOWN_COLLEAGUE_GROUP_TARGETS = new Set(["chat_id:24"]);
+
+export function isKnownColleagueGroup(context) {
+  if (!context || context.conversationType !== "group") return false;
+  const groupTarget = normalize(context.groupTarget || "");
+  if (KNOWN_COLLEAGUE_GROUP_TARGETS.has(groupTarget)) return true;
+  const access = String(context.access ?? "").toLowerCase();
+  return APPROVED_OUTBOUND_ACCESS.has(access)
+    || access === "approved_group_participant"
+    || context.isOwner === true;
+}
+
+export function colleagueGroupSystemPrompt(context) {
+  const personality = groupPersonalityPromptSection(context);
+  const incidentContext = istsIncidentPromptSection(context);
+  const escalationCapability = escalationCapabilityPromptSection(context);
+  const reviewedPersonContext = typeof context?.reviewedPersonContext === "string"
+    ? context.reviewedPersonContext
+    : "";
+  const emailCapability = context?.conversationType === "group" && context?.isOwner === true &&
+    context?.groupEmailCapability?.available === true
+    ? [
+        "One narrow external action is available in this turn: rico_group_email_execute may send one governed Microsoft Outlook email only when Alan's current message explicitly asks for it.",
+        "Email recipients must be people Alan literally named in this same message and must be selected from the reviewed opaque profiles below. Never treat the iMessage group, its membership, or an inferred address as an email recipient. Never invent a profile ID, address, source account, or attachment.",
+        `Reviewed email profiles (no addresses): ${JSON.stringify(context.groupEmailCapability.profiles)}`,
+        "For a normal email, provide a polished, detailed subject and body plus an attachments array (empty when none). For a meeting request, use action meeting_handoff; Rico cannot create or change calendar events.",
+      ].join("\n")
+    : "";
+  return [
+    "You are Rico, Alan Rosa's AI representative in a private colleague iMessage group.",
+    senderSystemContext(context),
+    "This is a known colleague group. It is not a shared public-safe space and not a public channel.",
+    "Every reply is visible to this group. Answer the current speaker. Use facts Alan already trusts you to use with these colleagues, including training and awards work.",
+    "Never tell them to ask Alan. Never say ask Alan directly. Never shrug that you cannot discuss colleague work because the space is public-safe.",
+    reviewedPersonContext,
+    incidentContext,
+    personality,
+    RICO_RESEARCH_SYSTEM_POLICY,
+    "Do not dump credentials, tokens, or private file paths. If a fact is missing or unverified, escalate through the stuck-question mailbox.",
+    emailCapability,
+    escalationCapability,
+    emailCapability || escalationCapability
+      ? "No other tools or external actions are available in this colleague-group turn."
+      : "If you cannot answer reliably, say you are verifying it. Never tell the person to ask Alan.",
+    "Respond briefly and naturally for iMessage. Never begin a reply with @rico.",
+  ].filter(Boolean).join("\n\n");
+}
+
 export function sharedAudienceSystemPrompt(context) {
   const personality = groupPersonalityPromptSection(context);
   const incidentContext = istsIncidentPromptSection(context);
@@ -633,6 +701,12 @@ export function senderIsolationApplied(systemPrompt, context) {
   }
   if (isVipDirectAudience(context)) {
     return systemPromptMatchesExpected(applied, approvedDirectSystemPrompt(context));
+  }
+  if (context.conversationType === "group") {
+    const expected = isKnownColleagueGroup(context)
+      ? colleagueGroupSystemPrompt(context)
+      : sharedAudienceSystemPrompt(context);
+    return systemPromptMatchesExpected(applied, expected);
   }
   return systemPromptMatchesExpected(applied, sharedAudienceSystemPrompt(context));
 }
@@ -966,6 +1040,9 @@ export function createApprovedTargetMemory() {
   };
   return {
     remember,
+    rememberInbound(event, ctx) {
+      for (const target of inboundConversationTargets(event, ctx)) remember(target);
+    },
     rememberPolicy(policy) {
       if (!policy || !Array.isArray(policy.identities)) return;
       for (const identity of policy.identities) {
@@ -986,6 +1063,24 @@ export function createApprovedTargetMemory() {
       targets.clear();
     },
   };
+}
+
+export function inboundConversationTargets(event = {}, ctx = {}) {
+  const values = [];
+  const push = (value) => {
+    if (value != null && String(value).trim()) values.push(String(value));
+  };
+  push(event.senderId);
+  push(ctx.senderId);
+  push(event.threadId);
+  push(event.conversationId);
+  push(ctx.chatId);
+  push(ctx.conversationId);
+  for (const raw of [event.threadId, event.conversationId, ctx.chatId, ctx.conversationId, event.to]) {
+    const text = String(raw ?? "").trim();
+    if (/^\d+$/.test(text)) push(`chat_id:${text}`);
+  }
+  return [...new Set(values.map((value) => normalize(value)).filter(Boolean))];
 }
 
 export function outboundTargetCandidates(event = {}, ctx = {}, senderContext) {

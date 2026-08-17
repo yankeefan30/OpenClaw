@@ -15,7 +15,7 @@ export function isVipDirectAudience(context) {
  */
 export function resolveVipDirectModel(context, sessionKey = "") {
   const key = String(sessionKey ?? "");
-  const sessionLooksDirect = /:imessage:direct:/i.test(key);
+  const sessionLooksDirect = /:imessage:(?:default:)?direct(?:$|:)/i.test(key);
   if (isVipDirectAudience(context) || (sessionLooksDirect && isVipDirectAudience({
     ...context,
     conversationType: context?.conversationType ?? "direct",

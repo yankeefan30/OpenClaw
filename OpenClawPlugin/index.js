@@ -8,6 +8,8 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
   APPROVED_OUTBOUND_ACCESS,
   approvedDirectSystemPrompt,
+  colleagueGroupSystemPrompt,
+  sharedAudienceSystemPrompt,
   createApprovedTargetMemory,
   createSessionAttestationStore,
   createSenderContextRegistry,
@@ -17,8 +19,10 @@ import {
   internalRuntimePayloadDisposition,
   isInternalModelBackendFailure,
   isInternalRuntimeStatusReply,
+  isKnownColleagueGroup,
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
+  KNOWN_COLLEAGUE_GROUP_TARGETS,
   normalize,
   outboundIdentity,
   parseIMessageGroups,
@@ -28,7 +32,6 @@ import {
   resolveSenderContext,
   senderSystemContext,
   senderIsolationApplied,
-  sharedAudienceSystemPrompt,
   verifyGroupMembership,
 } from "./policy.js";
 import { resolveVipDirectModel } from "./vip-route.js";
@@ -114,15 +117,45 @@ function knownApprovedInbound(event, ctx) {
   return Boolean(sender) && approvedTargets.has(sender);
 }
 
+function recoverTrustedPromptContext(inbound, ctx) {
+  if (!inbound) return undefined;
+  const sessionKey = String(inbound.sessionKey ?? ctx?.sessionKey ?? "");
+  const groupMatch = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
+  const groupTarget = groupMatch
+    ? normalize(`chat_id:${groupMatch[1]}`)
+    : /^\d+$/.test(String(inbound.threadId ?? "").trim())
+      ? normalize(`chat_id:${inbound.threadId}`)
+      : "";
+  if (groupTarget && KNOWN_COLLEAGUE_GROUP_TARGETS.has(groupTarget)) {
+    return {
+      conversationType: "group",
+      groupTarget,
+      access: "approved",
+      isOwner: false,
+      senderHandle: inboundSenderHandle(inbound, ctx) || undefined,
+    };
+  }
+  if (knownApprovedInbound(inbound, ctx) && inbound.isGroup !== true) {
+    return {
+      conversationType: "direct",
+      access: "approved",
+      isOwner: false,
+      senderHandle: inboundSenderHandle(inbound, ctx),
+    };
+  }
+  return undefined;
+}
+
 function inboundEventForAgentRun(event, ctx) {
   const sessionKey = String(ctx.sessionKey ?? "");
   const groupMatch = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
   const directMatch = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  const senderId = ctx.senderId ?? (directMatch ? directMatch[1] : undefined);
+  const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
+  const senderId = ctx.senderId ?? (directMatch && directMatch[1] !== "default" ? directMatch[1] : undefined);
   return {
     channel: "imessage",
     senderId,
-    isGroup: Boolean(groupMatch),
+    isGroup: Boolean(groupMatch) && !defaultDirect,
     threadId: ctx.chatId ?? groupMatch?.[1],
     sessionKey,
     runId: ctx.runId,
@@ -252,7 +285,7 @@ export default definePluginEntry({
         approvedTargets.rememberPolicy(policy);
         const decision = evaluateInbound(event, ctx, policy);
         if (decision.allow) {
-          approvedTargets.remember(inboundSenderHandle(event, ctx));
+          approvedTargets.rememberInbound(event, ctx);
           const senderContext = resolveSenderContext(event, ctx, policy);
           if (senderContext?.conversationType === "group") {
             const membership = verifyGroupMembership(policy, senderContext.groupTarget, await readIMessageGroups());
@@ -293,11 +326,11 @@ export default definePluginEntry({
         approvedTargets.rememberPolicy(policy);
         const normalizedEvent = {
           ...event,
-          isGroup: event.isGroup === true || sessionKey.includes(":imessage:group:"),
+          isGroup: event.isGroup === true || (sessionKey.includes(":imessage:group:") && !sessionKey.includes(":imessage:default:direct")),
         };
         const decision = evaluateInbound(normalizedEvent, ctx, policy);
         if (!decision.allow) return { handled: true };
-        approvedTargets.remember(inboundSenderHandle(normalizedEvent, ctx));
+        approvedTargets.rememberInbound(normalizedEvent, ctx);
         const senderContext = resolveSenderContext(normalizedEvent, ctx, policy);
         let currentGroupMembership = true;
         if (senderContext?.conversationType === "group") {
@@ -358,6 +391,8 @@ export default definePluginEntry({
       if (!senderContext && isIMessageRun(event, ctx)) {
         try {
           const policy = readPolicy(policyPath, directory);
+          approvedTargets.rememberPolicy(policy);
+          approvedTargets.rememberInbound(inbound, ctx);
           admissionDecision = evaluateInbound(inbound, ctx, policy);
           if (!admissionDecision.allow) return;
           senderContext = resolveSenderContext(inbound, ctx, policy);
@@ -367,8 +402,15 @@ export default definePluginEntry({
           }
           if (!senderContexts.remember(inbound, ctx, senderContext)) return;
         } catch (error) {
-          api.logger.error?.(`Rico sender context could not be resolved before prompt build: ${error instanceof Error ? error.message : String(error)}`);
-          return;
+          const recovered = recoverTrustedPromptContext(inbound, ctx);
+          if (recovered) {
+            api.logger.warn?.(`Rico used a trusted inbound audience after a policy read error: ${error instanceof Error ? error.message : String(error)}`);
+            senderContext = recovered;
+            senderContexts.remember(inbound, ctx, senderContext);
+          } else {
+            api.logger.error?.(`Rico sender context could not be resolved before prompt build: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+          }
         }
       }
       if (!senderContext) return;
@@ -464,6 +506,9 @@ export default definePluginEntry({
         if (!senderContexts.remember(inbound, ctx, senderContext)) return;
       }
       if (senderContext.conversationType === "group") {
+        if (isKnownColleagueGroup(senderContext)) {
+          return { systemPrompt: colleagueGroupSystemPrompt(senderContext) };
+        }
         return { systemPrompt: sharedAudienceSystemPrompt(senderContext) };
       }
       if (senderContext.isOwner !== true) {
@@ -491,10 +536,13 @@ export default definePluginEntry({
       const senderContext = senderContexts.get(ctx);
       const approvedDirect = senderContext?.conversationType === "direct"
         && (senderContext.isOwner === true || APPROVED_OUTBOUND_ACCESS.has(senderContext.access));
+      const colleagueGroup = senderContext?.conversationType === "group"
+        && (senderContext.isOwner === true || APPROVED_OUTBOUND_ACCESS.has(senderContext.access)
+          || senderContext.access === "approved_group_participant");
       const vipModel = resolveVipDirectModel(senderContext, ctx.sessionKey);
-      // Approved/VIP directs fail open: never drop a trusted person's turn
-      // because isolation, grants, or session attestation is unsure.
-      if (approvedDirect) {
+      // Approved/VIP directs and known colleague groups fail open: never drop
+      // a trusted person's turn because isolation or attestation is unsure.
+      if (approvedDirect || colleagueGroup) {
         if (senderContext.escalationCapability?.available === true) {
           sharedEscalationProofs.attest(event, ctx, senderContext);
         }
@@ -677,6 +725,14 @@ export default definePluginEntry({
       if (decision.cancel && decision.reason === "public_safe_shrug") {
         api.logger.warn?.("Rico suppressed a public-safe / ask-Alan shrug from external iMessage delivery.");
         return { cancel: true, cancelReason: "Public-safe shrugs are not allowed in external iMessage delivery." };
+      }
+      if (decision.cancel && decision.reason === "guard_block_notice") {
+        api.logger.warn?.("Rico suppressed an internal recipient-guard block banner from external iMessage delivery.");
+        return { cancel: true, cancelReason: "Internal recipient-guard block notices are not allowed in external iMessage delivery." };
+      }
+      if (decision.cancel && decision.reason === "empty_local_model_turn") {
+        api.logger.warn?.("Rico suppressed an empty local-model failure banner from external iMessage delivery.");
+        return { cancel: true, cancelReason: "Empty local-model turns are not a user-visible timeout fallback." };
       }
       if (!decision.allow) {
         api.logger.warn?.(`Rico guard blocked an unknown iMessage target: ${normalize(event.to)}`);

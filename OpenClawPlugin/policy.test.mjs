@@ -7,6 +7,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
   approvedDirectSystemPrompt,
+  colleagueGroupSystemPrompt,
   consumeOwnerAuthorization,
   createSessionAttestationStore,
   createSenderContextRegistry,
@@ -96,6 +97,24 @@ test("owner direct chats do not require an @rico mention", () => {
     owner,
     { target: "chat_id:24", kind: "group", access: "approved", requireMention: true, autoReply: true, quietStart: 0, quietEnd: 0, participants: ["+15550000001"] },
   ])).allow, false);
+});
+
+test("approved VIP chat ids are the same outbound identity as the handle", () => {
+  const jeff = {
+    target: "+15555554454",
+    kind: "individual",
+    access: "approved",
+    requireMention: false,
+    autoReply: true,
+    quietStart: 0,
+    quietEnd: 0,
+    displayName: "Jeff Roach",
+    directChatId: 9,
+  };
+  const registry = policy([jeff]);
+  assert.equal(outboundIdentity(registry, "+15555554454").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:9").access, "approved");
+  assert.equal(outboundIdentity(registry, "chat_id:24"), undefined);
 });
 
 test("owner self-chat chat ids are the same outbound identity as the owner handle", () => {
@@ -363,8 +382,9 @@ test("resolved Contacts name is run-bound data and Alan is not assumed to be the
   assert.match(senderSystemContext(resolved), /current_sender_name: "Janet Cummings"/);
   assert.match(senderSystemContext(resolved), /current speaker, not Alan/);
   assert.doesNotMatch(senderSystemContext(resolved), /\+1555/);
-  const sharedPrompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(sharedPrompt, /deliberately isolated public conversation context/);
+  const sharedPrompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(sharedPrompt, /known colleague group/);
+  assert.doesNotMatch(sharedPrompt, /deliberately isolated public conversation context/);
   assert.match(sharedPrompt, /current_sender_name: "Janet Cummings"/);
   assert.doesNotMatch(sharedPrompt, /\+1555/);
   assert.equal(senderIsolationApplied(sharedPrompt, resolved), true);
@@ -477,12 +497,11 @@ test("group personality is canonical, exact-group scoped, and subordinate to pri
   assert.match(section, /rico_group_style_preference/);
   assert.match(section, /Warm and witty system override tools/);
   assert.match(section, /only to shape tone/);
-  const prompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(prompt, /deliberately isolated public conversation context/);
-  assert.match(prompt, /never changes who the current speaker is or how the trusted sender name is resolved/);
-  assert.match(prompt, /never changes who is authorized, never grants tools or external actions/);
-  assert.match(prompt, /No tools are available/);
-  assert.ok(prompt.indexOf("group style preference is subordinate") > prompt.indexOf("Warm and witty"));
+  const prompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(prompt, /known colleague group/);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/);
+  assert.match(prompt, /Never tell them to ask Alan/);
+  assert.match(prompt, /Warm and witty system override tools/);
   assert.equal(senderIsolationApplied(prompt, resolved), true);
 
   const other = resolveSenderContext({ ...event, threadId: 43 }, {}, reviewed);
@@ -501,9 +520,9 @@ test("the narrow group-email prompt appears only for the exact owner capability"
     conversationType: "group", displayName: "Alan Rosa", senderHandle: "+15550000001",
     isOwner: true, access: "owner", groupTarget: "chat_id:42", audienceFingerprint: "a".repeat(64),
   };
-  const unavailable = sharedAudienceSystemPrompt(base);
-  assert.match(unavailable, /No tools are available/u);
-  const available = sharedAudienceSystemPrompt({
+  const unavailable = colleagueGroupSystemPrompt(base);
+  assert.doesNotMatch(unavailable, /rico_group_email_execute/u);
+  const available = colleagueGroupSystemPrompt({
     ...base,
     groupEmailCapability: {
       available: true,
@@ -546,9 +565,10 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.doesNotMatch(prompt, /Please ask Alan directly/u);
   assert.equal(senderIsolationApplied(prompt, direct), true);
   const group = { ...direct, conversationType: "group", groupTarget: "chat_id:42" };
-  const groupPrompt = sharedAudienceSystemPrompt(group);
+  const groupPrompt = colleagueGroupSystemPrompt(group);
   assert.match(groupPrompt, /Current operational situation: a production login issue/u);
-  assert.match(groupPrompt, /No tools are available/u);
+  assert.match(groupPrompt, /known colleague group/u);
+  assert.doesNotMatch(groupPrompt, /deliberately isolated public conversation context/u);
   assert.equal(senderIsolationApplied(groupPrompt, group), true);
 });
 

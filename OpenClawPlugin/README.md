@@ -6,10 +6,12 @@ policy-read throws, quiet hours, and `event.to` chat_id mismatches must not
 drop a send to someone already on the list. Strangers still fail closed.
 
 Direct iMessage turns are private one-to-one conversations. They are not a
-shared public-safe group. Rico answers or escalates through the stuck-question
-mailbox. He never says “ask Alan directly.” VIP directs start Claude via
-`rico-vip-route`. `Model Fallback:` / timeout telemetry is stripped or
-cancelled before iMessage delivery.
+shared public-safe group. Known colleague groups (Ana+Janet `chat_id:24` and
+other approved groups) are the same class: they may discuss training and
+awards work and never shrug “ask Alan directly.” VIP directs start Claude via
+`rico-vip-route`, including live `imessage:default:direct`. `Model Fallback:` /
+timeout / unavailable banners, `blocked by rico-recipient-guard`, and empty
+local-model turns are stripped or cancelled before iMessage delivery.
 
 Inbound still ignores unknown senders. Quiet hours no longer apply to
 approved/trusted/owner people. Owner grants may still be consumed so leftovers
@@ -26,8 +28,9 @@ is blocked before model execution. Group membership is read back from Messages
 before inbound processing and again before delivery; any change pauses that
 group until it is explicitly reviewed in Studio.
 
-Approved VIP directs receive a private one-to-one system prompt. Group turns
-still receive a fully replaced public-only system prompt. Shared audiences are deny-all except that one exact
+Approved VIP directs receive a private one-to-one system prompt. Known
+colleague groups receive a colleague prompt, not the public-safe shrug path.
+Unknown shared audiences stay deny-all except that one exact
 reviewed owner in one exact approved group may receive the single
 `rico_group_email_execute` tool after current group membership, private
 profile state, and Outlook health are all re-proved. The tool accepts opaque

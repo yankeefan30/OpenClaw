@@ -20,6 +20,14 @@ test("VIP and owner directs resolve to Claude, never Qwen", () => {
   }
 });
 
+test("live rico-shared default:direct is a VIP Claude session", () => {
+  const jeff = { conversationType: "direct", access: "approved", isOwner: false };
+  const liveKey = "agent:rico-shared:imessage:default:direct";
+  assert.equal(resolveVipDirectModel(jeff, liveKey), RICO_VIP_DIRECT_MODEL);
+  assert.equal(vipSessionModelIsClaude(jeff, liveKey), true);
+  assert.notEqual(resolveVipDirectModel(jeff, liveKey), RICO_SHARED_LOCAL_MODEL);
+});
+
 test("groups do not steal the VIP Claude route", () => {
   assert.equal(resolveVipDirectModel({
     conversationType: "group",
@@ -34,4 +42,5 @@ test("plugin registers only the model-selection hook", () => {
   assert.deepEqual(manifest.contracts.hooks, ["before_agent_run"]);
   assert.match(source, /id: "rico-vip-route"/u);
   assert.match(source, /modelOverride/u);
+  assert.match(source, /:imessage:\(\?:default:\)\?direct/u);
 });
