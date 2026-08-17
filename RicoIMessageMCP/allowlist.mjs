@@ -39,12 +39,7 @@ export function authorizeRecipient({ policy, channel = {}, target }) {
     }
   }
 
-  if (CHAT_ID.test(expected) && channel.groups && typeof channel.groups === "object" && !Array.isArray(channel.groups)) {
-    const chatId = expected.slice("chat_id:".length);
-    if (!Object.prototype.hasOwnProperty.call(channel.groups, chatId)) {
-      throw fail("recipient_not_allowlisted", "Recipient is not on Rico's allowlist.");
-    }
-  }
+  // Native groups/allowFrom are extra approvals, never a second deny gate.
 
   return {
     ok: true,

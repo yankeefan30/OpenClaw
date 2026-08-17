@@ -31,11 +31,12 @@ const janet = {
   quietEnd: 0,
 };
 
-test("VIP handles come from vip/trusted identities and the ISTS Jeff principal", () => {
+test("VIP handles come from approved/trusted identities; no vip flag required", () => {
   const policy = { schemaVersion: 2, paused: false, identities: [jeff, janet] };
-  assert.deepEqual(vipHandlesFromPolicy(policy, ["+18148814454"]), ["+18148814454"]);
+  assert.deepEqual(vipHandlesFromPolicy(policy, []), ["+18148814454", "+15550000002"]);
   assert.equal(isVipDirectIdentity(jeff), true);
-  assert.equal(isVipDirectIdentity(janet), false);
+  assert.equal(isVipDirectIdentity({ ...jeff, vip: undefined }), true);
+  assert.equal(isVipDirectIdentity(janet), true);
   assert.equal(isVipDirectIdentity({ ...janet, access: "trusted" }), true);
 });
 
@@ -45,11 +46,14 @@ test("only VIP directs request Claude; groups and strangers do not", () => {
     sessionKey: "agent:rico-shared:imessage:direct:+18148814454",
   }, { senderId: "+18148814454", channelId: "imessage" }, handles), true);
   assert.equal(isVipDirectTurn({
-    sessionKey: "agent:rico-shared:imessage:group:42",
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, { senderId: "+18148814454", channelId: "imessage" }, handles), true);
+  assert.equal(isVipDirectTurn({
+    sessionKey: "agent:rico-shared:imessage:group:24",
   }, { senderId: "+18148814454", channelId: "imessage" }, handles), false);
   assert.equal(isVipDirectTurn({
-    sessionKey: "agent:rico-shared:imessage:direct:+15550000002",
-  }, { senderId: "+15550000002", channelId: "imessage" }, handles), false);
+    sessionKey: "agent:rico-shared:imessage:direct:+15550000099",
+  }, { senderId: "+15550000099", channelId: "imessage" }, handles), false);
   assert.equal(senderHandleFromContext({}, { sessionKey: "agent:rico-vip:imessage:direct:+18148814454" }), "+18148814454");
 });
 

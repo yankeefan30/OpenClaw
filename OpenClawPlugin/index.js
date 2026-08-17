@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
   consumeOwnerAuthorization,
+  colleagueGroupSystemPrompt,
+  createApprovedTargetMemory,
   createSessionAttestationStore,
   createSenderContextRegistry,
   evaluateInbound,
@@ -14,6 +16,7 @@ import {
   internalRuntimePayloadDisposition,
   isInternalModelBackendFailure,
   isInternalRuntimeStatusReply,
+  isKnownColleagueGroup,
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
   isInternalModelRoutingNotice,
@@ -23,6 +26,7 @@ import {
   normalize,
   outboundIdentity,
   parseIMessageGroups,
+  prepareIMessageOutboundContent,
   readPolicy,
   readIstsVipHandles,
   resolveOutboundIdentity,
@@ -76,6 +80,7 @@ const policyPath = path.join(directory, "rico-recipient-guard.json");
 const grantsDirectory = path.join(directory, "owner-send-grants");
 const sessionAttestationPath = path.join(directory, "rico-sender-session-attestations.json");
 const senderContexts = createSenderContextRegistry();
+const approvedTargets = createApprovedTargetMemory();
 const peopleContexts = createPeopleContextRunRegistry();
 const sharedEscalationProofs = createSharedEscalationProofRegistry();
 const sessionAttestations = createSessionAttestationStore({
@@ -113,11 +118,12 @@ function inboundEventForAgentRun(event, ctx) {
   const sessionKey = String(ctx.sessionKey ?? "");
   const groupMatch = sessionKey.match(/:imessage:group:([^:]+)(?:$|:)/i);
   const directMatch = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  const senderId = ctx.senderId ?? (directMatch ? directMatch[1] : undefined);
+  const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
+  const senderId = ctx.senderId ?? (directMatch && directMatch[1] !== "default" ? directMatch[1] : undefined);
   return {
     channel: "imessage",
     senderId,
-    isGroup: Boolean(groupMatch),
+    isGroup: Boolean(groupMatch) && !defaultDirect,
     threadId: ctx.chatId ?? groupMatch?.[1],
     sessionKey,
     runId: ctx.runId,
@@ -244,8 +250,10 @@ export default definePluginEntry({
       if (channel !== "imessage") return;
       try {
         const policy = readPolicy(policyPath, directory);
+        approvedTargets.rememberPolicy(policy);
         const decision = evaluateInbound(event, ctx, policy);
         if (decision.allow) {
+          approvedTargets.rememberInbound(event, ctx);
           const senderContext = resolveSenderContext(event, ctx, policy);
           if (senderContext?.conversationType === "group") {
             const membership = verifyGroupMembership(policy, senderContext.groupTarget, await readIMessageGroups());
@@ -279,12 +287,14 @@ export default definePluginEntry({
       if (channel !== "imessage" && !sessionKey.includes(":imessage:")) return;
       try {
         const policy = readPolicy(policyPath, directory);
+        approvedTargets.rememberPolicy(policy);
         const normalizedEvent = {
           ...event,
-          isGroup: event.isGroup === true || sessionKey.includes(":imessage:group:"),
+          isGroup: event.isGroup === true || (sessionKey.includes(":imessage:group:") && !sessionKey.includes(":imessage:default:direct")),
         };
         const decision = evaluateInbound(normalizedEvent, ctx, policy);
         if (!decision.allow) return { handled: true };
+        approvedTargets.rememberInbound(normalizedEvent, ctx);
         const senderContext = resolveSenderContext(normalizedEvent, ctx, policy);
         let currentGroupMembership = true;
         if (senderContext?.conversationType === "group") {
@@ -341,6 +351,8 @@ export default definePluginEntry({
       if (!senderContext && isIMessageRun(event, ctx)) {
         try {
           const policy = readPolicy(policyPath, directory);
+          approvedTargets.rememberPolicy(policy);
+          approvedTargets.rememberInbound(inbound, ctx);
           admissionDecision = evaluateInbound(inbound, ctx, policy);
           if (!admissionDecision.allow) return;
           senderContext = resolveSenderContext(inbound, ctx, policy);
@@ -453,6 +465,9 @@ export default definePluginEntry({
       }
       if (isVipDirectContext(senderContext)) {
         return { systemPrompt: vipDirectSystemPrompt(senderContext) };
+      }
+      if (senderContext.conversationType === "group" && isKnownColleagueGroup(senderContext)) {
+        return { systemPrompt: colleagueGroupSystemPrompt(senderContext) };
       }
       if (senderContext.isOwner !== true || senderContext.conversationType === "group") {
         // Replace the entire bootstrap system prompt for every shared
@@ -624,12 +639,18 @@ export default definePluginEntry({
     api.on("message_sending", async (event, ctx) => {
       if (ctx.channelId !== "imessage") return;
       try {
+        const prepared = prepareIMessageOutboundContent(event.content);
+        if (prepared.action === "cancel") {
+          api.logger.warn?.(`Rico suppressed an internal iMessage banner: ${prepared.reason}`);
+          return { cancel: true, cancelReason: "Internal model-routing, guard-block, empty-turn, and public-safe shrugs are not delivered to iMessage." };
+        }
         const hadRoutingTelemetry = isInternalModelRoutingNotice(event.content)
-          || containsInternalModelTimeoutTelemetry(event.content);
+          || containsInternalModelTimeoutTelemetry(event.content)
+          || prepared.action === "replace";
         if (hadRoutingTelemetry) {
           api.logger.warn?.("Rico suppressed flattened internal model-routing telemetry from external iMessage delivery.");
         }
-        const stripped = hadRoutingTelemetry ? stripInternalModelRoutingNotice(event.content) : String(event.content ?? "");
+        const stripped = prepared.action === "replace" ? prepared.content : stripInternalModelRoutingNotice(event.content);
         if (hadRoutingTelemetry && (!stripped || isInternalModelRoutingNotice(stripped))) {
           return { cancel: true, cancelReason: "Internal model-routing telemetry is not allowed in external iMessage delivery." };
         }
@@ -651,6 +672,7 @@ export default definePluginEntry({
         let policy;
         try {
           policy = readPolicy(policyPath, directory);
+          approvedTargets.rememberPolicy(policy);
         } catch (error) {
           api.logger.error?.(`Rico guard could not read policy; failing open for outbound iMessage: ${error instanceof Error ? error.message : String(error)}`);
           return hadRoutingTelemetry || sanitizedRuntimeError || sanitizedEscalation ? { content: outboundContent } : undefined;
@@ -663,9 +685,9 @@ export default definePluginEntry({
         const vipDirect = identity?.kind !== "group" && (
           identity?.vip === true || identity?.access === "trusted" || vipHandles.includes(normalize(identity?.target))
         );
-        if (hadRoutingTelemetry && isPublicSafeDeflection(outboundContent)) {
-          api.logger.warn?.("Rico canceled a model-timeout public-safe deflection before iMessage delivery.");
-          return { cancel: true, cancelReason: "Model-fallback telemetry and public-safe deflections are not delivered to iMessage." };
+        if (isPublicSafeDeflection(outboundContent)) {
+          api.logger.warn?.("Rico canceled a public-safe / ask-Alan shrug before iMessage delivery.");
+          return { cancel: true, cancelReason: "Public-safe shrugs are not delivered to iMessage." };
         }
         if (vipDirect && isPublicSafeDeflection(outboundContent)) {
           api.logger.warn?.("Rico canceled a public-safe deflection before VIP/ISTS direct delivery.");
@@ -700,8 +722,11 @@ export default definePluginEntry({
         if (identity && isPrivilegedOutboundAccess(identity.access)) {
           return rewritten ? { content: outboundContent } : undefined;
         }
-        api.logger.warn?.(`Rico guard blocked unapproved iMessage target: ${normalize(event.to)}`);
-        return { cancel: true, cancelReason: "Recipient is not approved and no owner-initiated send grant matched." };
+        if (approvedTargets.has(event.to) || approvedTargets.has(ctx.chatId) || approvedTargets.has(`chat_id:${ctx.chatId}`)) {
+          return rewritten ? { content: outboundContent } : undefined;
+        }
+        api.logger.warn?.(`Rico guard blocked an unknown iMessage target: ${normalize(event.to)}`);
+        return { cancel: true, cancelReason: "Recipient is not on Rico's allowlist." };
       } catch (error) {
         api.logger.error?.(`Rico guard could not finish outbound checks; failing open: ${error instanceof Error ? error.message : String(error)}`);
         return;

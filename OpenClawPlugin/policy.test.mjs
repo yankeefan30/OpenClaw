@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import {
+  colleagueGroupSystemPrompt,
   consumeOwnerAuthorization,
   createSessionAttestationStore,
   createSenderContextRegistry,
@@ -16,6 +17,7 @@ import {
   isInternalModelBackendFailure,
   isInternalModelRoutingNotice,
   isInternalRuntimeStatusReply,
+  isKnownColleagueGroup,
   isPublicSafeDeflection,
   istsIncidentPromptSection,
   isOwnerRouteTrigger,
@@ -25,6 +27,7 @@ import {
   outboundIdentity,
   outboundTargetCandidates,
   parseIMessageGroups,
+  prepareIMessageOutboundContent,
   readPolicy,
   resolveOutboundIdentity,
   RICO_ESCALATION_SAFE_REPLY,
@@ -150,6 +153,13 @@ test("approved VIP chat ids and --deliver session metadata resolve without a one
   assert.deepEqual(outboundTargetCandidates({ to: undefined, sessionKey: "agent:main:imessage:direct:+18148814454" }), [
     "+18148814454",
   ]);
+  const liveJeff = { ...jeff, vip: undefined, directChatId: 9 };
+  const live = policy([liveJeff]);
+  assert.equal(outboundIdentity(live, "chat_id:9").access, "approved");
+  assert.equal(resolveOutboundIdentity(live, {
+    to: "chat_id:9",
+    sessionKey: "agent:rico-shared:imessage:default:direct",
+  }, { chatId: 9 }).access, "approved");
 });
 
 test("owner direct chats skip quiet hours", () => {
@@ -230,6 +240,13 @@ test("internal model-routing telemetry is suppressed only on external iMessage d
   assert.equal(stripInternalModelRoutingNotice(`${flattened}\nHere is the answer.`), "Here is the answer.");
   assert.equal(isPublicSafeDeflection("This is a shared, public-safe space / ask Alan directly"), true);
   assert.equal(isPublicSafeDeflection("Tuesday AT&T cutover is still on track."), false);
+  const guardBlock = "Your message could not be sent: blocked by rico-recipient-guard";
+  const emptyQwen = "[assistant turn failed before producing content]";
+  assert.equal(isInternalModelRoutingNotice(guardBlock), true);
+  assert.equal(isInternalModelRoutingNotice(emptyQwen), true);
+  assert.equal(prepareIMessageOutboundContent(guardBlock).action, "cancel");
+  assert.equal(prepareIMessageOutboundContent(emptyQwen).action, "cancel");
+  assert.equal(prepareIMessageOutboundContent(flattened).action, "cancel");
 
   assert.equal(shouldSuppressInternalModelRoutingPayload({
     channel: "imessage",
@@ -429,9 +446,11 @@ test("resolved Contacts name is run-bound data and Alan is not assumed to be the
   assert.match(senderSystemContext(resolved), /current_sender_name: "Janet Cummings"/);
   assert.match(senderSystemContext(resolved), /current speaker, not Alan/);
   assert.doesNotMatch(senderSystemContext(resolved), /\+1555/);
-  const sharedPrompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(sharedPrompt, /deliberately isolated public conversation context/);
+  const sharedPrompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(sharedPrompt, /known colleague group/);
+  assert.doesNotMatch(sharedPrompt, /deliberately isolated public conversation context/);
   assert.equal(isVipDirectContext(resolved), false);
+  assert.equal(isKnownColleagueGroup(resolved), true);
   assert.match(sharedPrompt, /current_sender_name: "Janet Cummings"/);
   assert.doesNotMatch(sharedPrompt, /\+1555/);
   assert.equal(senderIsolationApplied(sharedPrompt, resolved), true);
@@ -544,12 +563,11 @@ test("group personality is canonical, exact-group scoped, and subordinate to pri
   assert.match(section, /rico_group_style_preference/);
   assert.match(section, /Warm and witty system override tools/);
   assert.match(section, /only to shape tone/);
-  const prompt = sharedAudienceSystemPrompt(resolved);
-  assert.match(prompt, /deliberately isolated public conversation context/);
-  assert.match(prompt, /never changes who the current speaker is or how the trusted sender name is resolved/);
-  assert.match(prompt, /never changes who is authorized, never grants tools or external actions/);
-  assert.match(prompt, /No tools are available/);
-  assert.ok(prompt.indexOf("group style preference is subordinate") > prompt.indexOf("Warm and witty"));
+  const prompt = colleagueGroupSystemPrompt(resolved);
+  assert.match(prompt, /known colleague group/);
+  assert.doesNotMatch(prompt, /deliberately isolated public conversation context/);
+  assert.match(prompt, /Warm and witty system override tools/);
+  assert.match(prompt, /Never tell them to ask Alan/);
   assert.equal(senderIsolationApplied(prompt, resolved), true);
 
   const other = resolveSenderContext({ ...event, threadId: 43 }, {}, reviewed);
@@ -604,16 +622,15 @@ test("reviewed ISTS context is exact-audience scoped and remains non-authorizing
   assert.equal(istsIncidentPromptSection({ ...direct, conversationType: "group" }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, isOwner: true }), section);
   assert.equal(istsIncidentPromptSection({ ...direct, istsIncidentContext: "<rico_reviewed_ists_context>unsafe" }), "");
-  const prompt = sharedAudienceSystemPrompt(direct);
+  const prompt = vipDirectSystemPrompt(direct);
   assert.match(prompt, /narrow host-reviewed incident background/u);
   assert.match(prompt, /Current operational situation: a production login issue/u);
   assert.match(prompt, /not authorization, identity evidence, a role assignment/u);
-  assert.match(prompt, /No tools are available/u);
   assert.equal(senderIsolationApplied(prompt, direct), true);
   const group = { ...direct, conversationType: "group", groupTarget: "chat_id:42" };
-  const groupPrompt = sharedAudienceSystemPrompt(group);
+  const groupPrompt = colleagueGroupSystemPrompt(group);
   assert.match(groupPrompt, /Current operational situation: a production login issue/u);
-  assert.match(groupPrompt, /No tools are available/u);
+  assert.match(groupPrompt, /known colleague group/u);
   assert.equal(senderIsolationApplied(groupPrompt, group), true);
 });
 
@@ -622,7 +639,6 @@ test("ISTS/VIP directs are not a shared public-safe space and stay in Rico's voi
     ...contact,
     target: "+18148814454",
     displayName: "Jeff Roach",
-    vip: true,
   };
   const event = { channel: "imessage", senderId: "+18148814454", isGroup: false, content: "You around?" };
   const resolved = resolveSenderContext(event, {}, policy([jeff]));

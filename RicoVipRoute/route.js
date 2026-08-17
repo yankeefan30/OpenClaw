@@ -17,11 +17,12 @@ export function supportDirectory(homeDirectory = os.homedir()) {
 }
 
 export function vipHandlesFromPolicy(policy, extraVipHandles = []) {
-  if (!policy || !Array.isArray(policy.identities)) return [];
-  return policy.identities
+  if (!policy || !Array.isArray(policy.identities)) return extraVipHandles.map(normalize).filter(Boolean);
+  const fromPolicy = policy.identities
     .filter((identity) => isVipDirectIdentity(identity, extraVipHandles))
     .map((identity) => normalize(identity.target))
     .filter(Boolean);
+  return [...new Set([...fromPolicy, ...extraVipHandles.map(normalize).filter(Boolean)])];
 }
 
 export function loadVipHandles({ policyPath, directory } = {}) {
@@ -38,16 +39,19 @@ export function loadVipHandles({ policyPath, directory } = {}) {
 export function senderHandleFromContext(event, ctx = {}) {
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "");
   const direct = sessionKey.match(/:imessage:direct:([^:]+)(?:$|:)/i);
-  const raw = ctx?.senderId ?? event?.senderId ?? direct?.[1];
+  const raw = ctx?.senderId ?? event?.senderId ?? (direct && direct[1] !== "default" ? direct[1] : undefined);
   return normalize(raw);
 }
 
 export function isVipDirectTurn(event, ctx = {}, vipHandles = []) {
   const sessionKey = String(event?.sessionKey ?? ctx?.sessionKey ?? "").toLowerCase();
-  if (sessionKey.includes(":imessage:group:")) return false;
+  const defaultDirect = /:imessage:default:direct(?:$|:)/i.test(sessionKey);
+  const namedDirect = /:imessage:direct:/i.test(sessionKey);
+  if (sessionKey.includes(":imessage:group:") && !defaultDirect) return false;
+  if (defaultDirect) return true;
   const handle = senderHandleFromContext(event, ctx);
   if (!handle || !vipHandles.includes(handle)) return false;
-  return sessionKey.includes(":imessage:direct:") || String(ctx?.channelId ?? event?.channel ?? "").toLowerCase() === "imessage";
+  return namedDirect || String(ctx?.channelId ?? event?.channel ?? "").toLowerCase() === "imessage";
 }
 
 export function selectedModelIsLocalQwen(event, ctx = {}) {

@@ -79,7 +79,11 @@ const INTERNAL_MODEL_ROUTING_NOTICE_PATTERNS = [
 const INTERNAL_MODEL_ROUTING_NOTICE_LINE =
   /^(?:↪\uFE0F?\s*)?Model Fallback(?: cleared)?:[^\r\n]{0,1000}$/u;
 const INTERNAL_MODEL_TIMEOUT_TELEMETRY_LINE =
-  /(?:↪\uFE0F?\s*)?Model Fallback:[^\r\n]{0,1000}\b(?:timeout|selected\s+\S+)/iu;
+  /(?:↪\uFE0F?\s*)?Model Fallback:[^\r\n]{0,1000}\b(?:timeout|selected\s+\S+|unavailable)/iu;
+const GUARD_BLOCK_LINE_PATTERN =
+  /^(?:Your message could not be sent:\s*)?blocked by rico-recipient-guard\.?$/iu;
+const EMPTY_ASSISTANT_TURN_PATTERN =
+  /\[assistant turn failed before producing content\]/iu;
 const PUBLIC_SAFE_DEFLECTION_PATTERN =
   /(?:shared,\s*public-safe\s*space|ask alan directly|deliberately isolated public conversation|public-safe space)/iu;
 
@@ -132,11 +136,30 @@ export function internalEscalationMetadataReason(value) {
  * delivered to an external iMessage recipient. Keep this deliberately narrow
  * so ordinary discussion of models or fallback behavior is not suppressed.
  */
+export function isGuardBlockNotice(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  return Boolean(text) && GUARD_BLOCK_LINE_PATTERN.test(text);
+}
+
+export function isEmptyLocalAssistantFailure(value) {
+  return EMPTY_ASSISTANT_TURN_PATTERN.test(String(value ?? "").normalize("NFKC"));
+}
+
+export function isInternalDeliveryBannerLine(value) {
+  const text = String(value ?? "").normalize("NFKC").trim();
+  return INTERNAL_MODEL_ROUTING_NOTICE_LINE.test(text)
+    || isGuardBlockNotice(text)
+    || isEmptyLocalAssistantFailure(text);
+}
+
 export function isInternalModelRoutingNotice(value) {
   const text = String(value ?? "").normalize("NFKC").trim();
   if (!text) return false;
   if (INTERNAL_MODEL_ROUTING_NOTICE_PATTERNS.some((pattern) => pattern.test(text))) return true;
-  return text.split(/\r?\n/u).some((line) => INTERNAL_MODEL_ROUTING_NOTICE_LINE.test(line.trim()));
+  const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  if (lines.every((line) => isInternalDeliveryBannerLine(line))) return true;
+  return lines.some((line) => INTERNAL_MODEL_ROUTING_NOTICE_LINE.test(line));
 }
 
 export function containsInternalModelTimeoutTelemetry(value) {
@@ -148,9 +171,30 @@ export function stripInternalModelRoutingNotice(value) {
   const text = String(value ?? "").normalize("NFKC");
   return text
     .split(/\r?\n/u)
-    .filter((line) => !INTERNAL_MODEL_ROUTING_NOTICE_LINE.test(line.trim()))
+    .filter((line) => !isInternalDeliveryBannerLine(line))
     .join("\n")
     .trim();
+}
+
+/**
+ * Last-mile iMessage filter. Banners and public-safe shrugs never deliver.
+ * An empty Qwen 32ms 200 is not a user-visible timeout.
+ */
+export function prepareIMessageOutboundContent(value) {
+  const original = String(value ?? "");
+  if (isGuardBlockNotice(original)) return { action: "cancel", reason: "guard_block_notice" };
+  if (isEmptyLocalAssistantFailure(original)) return { action: "cancel", reason: "empty_local_model_turn" };
+  const stripped = stripInternalModelRoutingNotice(original);
+  if (!stripped || isInternalModelRoutingNotice(original)) {
+    return { action: "cancel", reason: "model_fallback_notice" };
+  }
+  if (isPublicSafeDeflection(stripped)) {
+    return { action: "cancel", reason: "public_safe_shrug" };
+  }
+  if (stripped !== original.normalize("NFKC").trim()) {
+    return { action: "replace", content: stripped, reason: "stripped_model_fallback" };
+  }
+  return { action: "deliver", content: original };
 }
 
 export function isPublicSafeDeflection(value) {
@@ -447,7 +491,7 @@ export function resolveSenderContext(event, ctx, policy) {
     senderHandle: sender,
     isOwner: owner,
     access,
-    vip: !group && individuals.some((item) => item.vip === true || item.access === "trusted"),
+    vip: !group && !owner && OUTBOUND_ACCESS.has(access),
     groupTarget: group ? normalize(group.target) : undefined,
     audienceFingerprint: crypto.createHash("sha256").update(audienceMaterial, "utf8").digest("hex"),
     // Host-private allowlist used only to recognize OpenClaw reaction events.
@@ -579,6 +623,52 @@ export function sharedAudienceSystemPrompt(context) {
   ].filter(Boolean).join("\n\n");
 }
 
+export const KNOWN_COLLEAGUE_GROUP_TARGETS = new Set(["chat_id:24"]);
+
+export function isKnownColleagueGroup(context) {
+  if (!context || context.conversationType !== "group") return false;
+  const groupTarget = normalize(context.groupTarget || "");
+  if (KNOWN_COLLEAGUE_GROUP_TARGETS.has(groupTarget)) return true;
+  const access = String(context.access ?? "").toLowerCase();
+  return OUTBOUND_ACCESS.has(access) || access === "approved_group_participant" || context.isOwner === true;
+}
+
+export function colleagueGroupSystemPrompt(context) {
+  const personality = groupPersonalityPromptSection(context);
+  const incidentContext = istsIncidentPromptSection(context);
+  const escalationCapability = escalationCapabilityPromptSection(context);
+  const reviewedPersonContext = typeof context?.reviewedPersonContext === "string"
+    ? context.reviewedPersonContext
+    : "";
+  const emailCapability = context?.conversationType === "group" && context?.isOwner === true &&
+    context?.groupEmailCapability?.available === true
+    ? [
+        "One narrow external action is available in this turn: rico_group_email_execute may send one governed Microsoft Outlook email only when Alan's current message explicitly asks for it.",
+        "Email recipients must be people Alan literally named in this same message and must be selected from the reviewed opaque profiles below. Never treat the iMessage group, its membership, or an inferred address as an email recipient. Never invent a profile ID, address, source account, or attachment.",
+        `Reviewed email profiles (no addresses): ${JSON.stringify(context.groupEmailCapability.profiles)}`,
+        "For a normal email, provide a polished, detailed subject and body plus an attachments array (empty when none). For a meeting request, use action meeting_handoff; Rico cannot create or change calendar events.",
+      ].join("\n")
+    : "";
+  return [
+    "You are Rico, Alan Rosa's AI representative in a private colleague iMessage group.",
+    senderSystemContext(context),
+    "This is a known colleague group. It is not a shared public-safe space and not a public channel.",
+    "Every reply is visible to this group. Answer the current speaker. Use facts Alan already trusts you to use with these colleagues, including training and awards work.",
+    "Never tell them to ask Alan. Never say ask Alan directly. Never shrug that you cannot discuss colleague work because the space is public-safe.",
+    reviewedPersonContext,
+    incidentContext,
+    personality,
+    RICO_RESEARCH_SYSTEM_POLICY,
+    "Do not dump credentials, tokens, or private file paths. If a fact is missing or unverified, escalate through the stuck-question mailbox.",
+    emailCapability,
+    escalationCapability,
+    emailCapability || escalationCapability
+      ? "No other tools or external actions are available in this colleague-group turn."
+      : "If you cannot answer reliably, say you are verifying it. Never tell the person to ask Alan.",
+    "Respond briefly and naturally for iMessage. Never begin a reply with @rico.",
+  ].filter(Boolean).join("\n\n");
+}
+
 export function vipDirectSystemPrompt(context) {
   const incidentContext = istsIncidentPromptSection(context);
   const escalationCapability = escalationCapabilityPromptSection(context);
@@ -624,6 +714,12 @@ export function senderIsolationApplied(systemPrompt, context) {
   }
   if (isVipDirectContext(context)) {
     return hostAppliedSystemPromptMatches(applied, vipDirectSystemPrompt(context));
+  }
+  if (context.conversationType === "group") {
+    const expected = isKnownColleagueGroup(context)
+      ? colleagueGroupSystemPrompt(context)
+      : sharedAudienceSystemPrompt(context);
+    return hostAppliedSystemPromptMatches(applied, expected);
   }
   return hostAppliedSystemPromptMatches(applied, sharedAudienceSystemPrompt(context));
 }
@@ -976,6 +1072,8 @@ export function outboundTargetCandidates(event, ctx = {}) {
   addOutboundCandidate(values, event?.destination);
   addOutboundCandidate(values, ctx?.to);
   addOutboundCandidate(values, ctx?.recipient);
+  addOutboundCandidate(values, ctx?.chatId);
+  addOutboundCandidate(values, ctx?.conversationId);
   const metadata = event?.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
     ? event.metadata
     : {};
@@ -1026,10 +1124,8 @@ export function readIstsVipHandles(supportDirectory) {
 }
 
 export function isVipDirectIdentity(identity, extraVipHandles = []) {
-  if (!identity || identity.kind === "group" || !OUTBOUND_ACCESS.has(identity.access) || identity.access === "owner") {
-    return false;
-  }
-  if (identity.vip === true || identity.access === "trusted") return true;
+  if (!identity || identity.kind === "group" || identity.access === "owner") return false;
+  if (OUTBOUND_ACCESS.has(identity.access)) return true;
   const target = normalize(identity.target);
   return extraVipHandles.map(normalize).includes(target);
 }
@@ -1037,5 +1133,81 @@ export function isVipDirectIdentity(identity, extraVipHandles = []) {
 export function isVipDirectContext(context) {
   return context?.conversationType === "direct"
     && context?.isOwner !== true
-    && (context?.vip === true || context?.access === "trusted");
+    && (context?.vip === true || OUTBOUND_ACCESS.has(String(context?.access ?? "").toLowerCase()));
+}
+
+export function createApprovedTargetMemory() {
+  const targets = new Set();
+  const remember = (value) => {
+    const normalized = normalize(value);
+    if (normalized) targets.add(normalized);
+  };
+  return {
+    remember,
+    rememberInbound(event, ctx) {
+      remember(event?.senderId);
+      remember(ctx?.senderId);
+      remember(event?.threadId);
+      remember(ctx?.chatId);
+      for (const raw of [event?.threadId, event?.conversationId, ctx?.chatId, ctx?.conversationId]) {
+        const text = String(raw ?? "").trim();
+        if (/^\d+$/.test(text)) remember(`chat_id:${text}`);
+      }
+    },
+    rememberPolicy(policy) {
+      if (!policy || !Array.isArray(policy.identities)) return;
+      for (const identity of policy.identities) {
+        if (!identity || !OUTBOUND_ACCESS.has(identity.access)) continue;
+        remember(identity.target);
+        if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+          remember(`chat_id:${identity.directChatId}`);
+        }
+      }
+    },
+    has(value) {
+      return targets.has(normalize(value));
+    },
+    values() {
+      return [...targets];
+    },
+  };
+}
+
+export function authorizeOutboundSend({
+  target,
+  candidates = [],
+  policy,
+  policyError = false,
+  allowFrom = [],
+  knownApproved = [],
+} = {}) {
+  const approved = new Set();
+  const add = (value) => {
+    const normalized = normalize(value);
+    if (normalized) approved.add(normalized);
+  };
+  for (const item of allowFrom) add(item);
+  for (const item of knownApproved) add(item);
+  if (policy && Array.isArray(policy.identities)) {
+    for (const identity of policy.identities) {
+      if (!identity || !OUTBOUND_ACCESS.has(identity.access)) continue;
+      add(identity.target);
+      if (Number.isSafeInteger(identity.directChatId) && identity.directChatId > 0) {
+        add(`chat_id:${identity.directChatId}`);
+      }
+    }
+  }
+  const probes = [...new Set([target, ...candidates].map((value) => normalize(value)).filter(Boolean))];
+  for (const probe of probes) {
+    if (approved.has(probe)) {
+      return { allow: true, reason: policyError ? "approved_fail_open" : "approved_identity", target: probe };
+    }
+    if (policy) {
+      const identity = outboundIdentity(policy, probe);
+      if (identity && OUTBOUND_ACCESS.has(identity.access)) {
+        return { allow: true, reason: "approved_identity", target: probe, identity };
+      }
+    }
+  }
+  return { allow: false, reason: "stranger" };
 }

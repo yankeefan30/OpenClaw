@@ -92,11 +92,11 @@ test("native allowFrom cannot drop an already-approved identity", () => {
     channel: { allowFrom: ["+16469433060", "+15550000002"] },
     target: "+15550000002",
   }).ok, true);
-  assert.throws(() => authorizeRecipient({
+  assert.equal(authorizeRecipient({
     policy: current,
     channel: { groups: { "7": { requireMention: true } } },
     target: "chat_id:24",
-  }), { code: "recipient_not_allowlisted" });
+  }).kind, "group");
 });
 
 test("send tool rejects strangers without calling Gateway send", async () => {
