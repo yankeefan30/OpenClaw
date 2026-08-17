@@ -45,5 +45,9 @@ RicoCommsMonitor/rollback-*/
 # Local runtime receipts
 **/.runner-receipt.json
 
+# Lindy local-bridge live allowlist (names/workflow IDs only; never commit a filled copy)
+**/lindy-local-bridge.allowlist.json
+!RicoLindyBridge/allowlist.example.json
+
 # Packaging leftovers
 OpenClawStudio-install.*

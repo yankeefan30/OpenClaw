@@ -234,6 +234,25 @@ export function createLocalApps({
       };
     },
 
+    async outlookDraft({ to, from, subject, text }) {
+      await requireOutlook(outlookAppPath);
+      const output = await runApp(runner, outlookDraftScript({ to, from, subject, text }), "outlook", 30_000);
+      const lines = String(output).split("\n");
+      if (lines[0] !== "RICO_OK" || !lines[1]) {
+        throw fail("outlook_draft_failed", "Outlook did not confirm the draft.");
+      }
+      return {
+        ok: true,
+        client: "outlook",
+        drafted: true,
+        sent: false,
+        id: lines[1],
+        to,
+        from,
+        subject,
+      };
+    },
+
     async outlookSend(request) {
       await requireOutlook(outlookAppPath);
       try {
@@ -587,6 +606,22 @@ set bodyText to plain text content of m as text
 end try
 set row to (id of m as text) & (character id 31) & my clipText(subject of m as text, ${MAX_SUBJECT_CHARS}) & (character id 31) & my clipText(senderAddr, 254) & (character id 31) & my isoDate(time received of m) & (character id 31) & my clipText(bodyText, ${MAX_MAIL_BODY_CHARS})
 return "RICO_OK" & linefeed & "1" & linefeed & "1" & linefeed & row
+end tell`;
+}
+
+function outlookDraftScript({ to, from, subject, text }) {
+  return `tell application id "${OUTLOOK_BUNDLE_ID}"
+set requestedSender to ${appleScriptString(from)}
+set matchingAccounts to {}
+repeat with candidate in ((every exchange account) & (every imap account) & (every pop account))
+if (email address of candidate as text) is requestedSender then set end of matchingAccounts to candidate
+end repeat
+if (count of matchingAccounts) is not 1 then error "RICO_OUTLOOK_SOURCE_UNPROVEN" number 7201
+set selectedAccount to item 1 of matchingAccounts
+set newMessage to make new outgoing message with properties {subject:${appleScriptString(subject)}, plain text content:${appleScriptString(text)}, account:selectedAccount}
+make new to recipient at newMessage with properties {email address:{address:${appleScriptString(to)}}}
+if (was sent of newMessage) is true then error "RICO_OUTLOOK_DRAFT_SENT" number 7208
+return "RICO_OK" & linefeed & (id of newMessage as text)
 end tell`;
 }
 

@@ -150,10 +150,18 @@ manifest-scoped, moves owned code and private runtime state to Trash, preserves
 dated capture media, touches no unrelated OpenClaw state, and installs no
 auto-send LaunchAgent.
 
+## Lindy local mail/calendar bridge
+
+Lindy is the only messaging front door. Rico on the Mac Mini is a thin local
+bridge for CVS Health Outlook and Calendar.app — not a speaker and not a
+general SMS agent. See [`RicoLindyBridge/README.md`](RicoLindyBridge/README.md).
+Keep `channels.imessage.enabled` false.
+
 ## Verification
 
 ```sh
 swift test --disable-sandbox
+(cd RicoLindyBridge && npm test)
 (cd OpenClawPlugin && npm test)
 node --test IMsgOwnerRoute/imsg-owner-route.test.mjs
 (cd AutonomyGovernorPlugin && npm test && npm run check)

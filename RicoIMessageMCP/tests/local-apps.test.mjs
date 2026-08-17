@@ -111,6 +111,15 @@ test("Outlook tools return a clear error when Outlook is not installed", async (
     callTool({ localApps: apps }, "rico_outlook_get", { id: "1" }),
     { code: "outlook_not_installed" },
   );
+  await assert.rejects(
+    apps.outlookDraft({
+      to: "janet@example.com",
+      from: "alan.rosa@cvshealth.com",
+      subject: "Follow-up",
+      text: "Draft only",
+    }),
+    { code: "outlook_not_installed" },
+  );
 });
 
 test("local app health never echoes secrets or account identifiers", async () => {

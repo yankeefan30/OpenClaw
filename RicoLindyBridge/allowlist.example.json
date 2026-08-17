@@ -1,0 +1,30 @@
+{
+  "schema": "rico.lindy-local-bridge-allowlist",
+  "schemaVersion": 1,
+  "people": [
+    { "name": "Alan Rosa", "role": "owner" },
+    { "name": "Jeff Roach", "role": "vip" },
+    { "name": "Al Sassoon", "role": "approved" },
+    { "name": "Lenny Guardino", "role": "approved" },
+    { "name": "Saul Mankes", "role": "approved" },
+    { "name": "Matt Horowitz", "role": "approved" },
+    { "name": "Ana Tramont", "role": "approved" },
+    { "name": "Frank McAloon", "role": "approved" },
+    { "name": "Joe Lombardi", "role": "approved" },
+    { "name": "Janet Cummings", "role": "approved" }
+  ],
+  "workflows": [
+    {
+      "id": "lindy-cvs-mail-read",
+      "tools": ["health", "outlook_list_inbox", "outlook_search", "outlook_get"]
+    },
+    {
+      "id": "lindy-cvs-mail-draft",
+      "tools": ["outlook_draft"]
+    },
+    {
+      "id": "lindy-cvs-calendar",
+      "tools": ["health", "calendar_list", "calendar_upsert"]
+    }
+  ]
+}

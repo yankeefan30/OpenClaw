@@ -15,3 +15,14 @@ jobs:
         run: swift build
       - name: Run protocol fixtures
         run: swift run OpenClawStudioFixtures
+
+  lindy-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Rico Lindy local-bridge tests
+        run: node --test tests/*.test.mjs
+        working-directory: RicoLindyBridge

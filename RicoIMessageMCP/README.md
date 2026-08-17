@@ -1,5 +1,10 @@
 # Rico iMessage MCP
 
+**Lindy is now Rico’s only messaging front door.** Do not use this package as a
+speaker. iMessage / Messages stays disabled. CVS Health mail and calendar for
+Lindy go through [`RicoLindyBridge`](../RicoLindyBridge/README.md)
+(`POST /lindy/local-bridge`), not through these iMessage tools.
+
 A **narrow loopback MCP server** so a tailnet client (for example a self-hosted [runner.now](https://guides.runner.now/connections/connect-your-own-mcp) job) can hit Rico’s OpenClaw instance without exposing the Gateway.
 
 This is **not** `openclaw mcp serve`. That command exposes Gateway conversations, history, and approvals. This package wraps allowlisted iMessage `send`, a `channels.status` probe, an allowlist check that never calls `send`, and a small local-app surface for Mail.app, Calendar.app, and governed Microsoft Outlook on this Mac.
