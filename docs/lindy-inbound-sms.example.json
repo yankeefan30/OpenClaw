@@ -12,9 +12,18 @@
     "settings": "Settings → General → Text message service",
     "rebindToRico": false
   },
+  "architecture": {
+    "right": "provider-owned SMS number to custom Rico on Lindy and back",
+    "wrong": [
+      "Twilio hung on the Lindy Phone line",
+      "Twilio aimed at the OpenClaw SMS funnel",
+      "rebind the default assistant text path to Rico"
+    ]
+  },
   "workingInboundText": {
     "requiresAlanAuthorization": true,
     "provider": "twilio",
+    "whyTwilio": "documented SMS Received plus Send SMS pair, not a native Lindy SMS product",
     "trigger": "SMS Received",
     "replyAction": "Send SMS Message",
     "numberOwner": "the SMS provider, not Lindy Phone",

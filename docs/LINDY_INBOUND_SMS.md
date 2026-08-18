@@ -104,6 +104,54 @@ cannot attach Twilio **SMS Received** to the purchased Lindy Phone
 line. A working text front door uses a number that the SMS provider
 owns.
 
+## Is Twilio → Lindy the right architecture?
+
+**Yes for multi-user inbound SMS to custom Rico. No for the purchased
+Lindy Phone line. No for the old OpenClaw SMS funnel.**
+
+The architecture to keep is:
+
+```
+approved sender SMS
+        │
+        ▼
+provider-owned SMS number ── inbound trigger ──► Rico on Lindy
+        ▲                                            │
+        └──────── outbound SMS ◄── existing Rico ────┘
+```
+
+Admission stays on the Rico console. Rico never starts a thread.
+Strangers fail closed.
+
+Twilio is not a special Lindy design. It is the SMS carrier Lindy
+documents for that pair (**SMS Received** + **Send SMS Message**).
+Any other inbound-SMS app in the picker is the same shape with worse
+docs. Pick Twilio if Alan authorizes a carrier. Do not pick Plivo or
+Salesmsg just to avoid saying Twilio.
+
+It is the **wrong** architecture when:
+
+- The goal is “make the purchased Lindy Phone line accept texts.”
+  Lindy-managed numbers cannot be hung on a customer Twilio trigger.
+  Texting that line will not become Rico SMS by connecting Twilio.
+- The goal is “reuse `/webhooks/sms` on Rico.local.” That funnel is
+  the old OpenClaw path. It wants the Gateway up. Lindy is the front
+  door. Do not aim Twilio at OpenClaw to solve this.
+- The only texter is Alan, and he is willing to use the default Lindy
+  assistant. That is the native Settings → General path. He already
+  forbade rebinding it to speak as Rico, so it is not this front door.
+- Alan has not authorized a third-party SMS account. Then the right
+  move is report-and-wait, not connect.
+
+Webhook Received is the same architecture with more glue: something
+still has to own an SMS number and POST into Lindy. It does not avoid
+a carrier. It only avoids Lindy’s Twilio OAuth screen.
+
+Cost is honest: the Lindy Phone line stays a voice line they already
+pay for. A working text number is a second, provider-owned line.
+Do not release the Lindy line to “make room.” Do not buy another
+Lindy number.
+
 ## Actual working inbound-text design
 
 For a **custom** agent named Rico (not the default assistant):
