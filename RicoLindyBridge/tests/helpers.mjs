@@ -14,10 +14,10 @@ export function exampleAllowlist(overrides = {}) {
       { name: "Janet Cummings", role: "approved" },
     ],
     workflows: [
-      { id: "lindy-cvs-mail-read", tools: ["health", "outlook_list_inbox", "outlook_search", "outlook_get"] },
+      { id: "lindy-cvs-mail-read", tools: ["health", "mailbox_names", "outlook_list_inbox", "outlook_search", "outlook_get"] },
       { id: "lindy-cvs-mail-draft", tools: ["outlook_draft"] },
-      { id: "lindy-cvs-calendar", tools: ["health", "calendar_list", "calendar_upsert"] },
-      { id: "lindy-mcp", tools: ["health", "outlook_list_inbox", "outlook_search", "outlook_get", "outlook_draft", "calendar_list", "calendar_upsert"] },
+      { id: "lindy-cvs-calendar", tools: ["health", "calendar_names", "calendar_list", "calendar_upsert"] },
+      { id: "lindy-mcp", tools: ["health", "outlook_list_inbox", "outlook_search", "outlook_get", "outlook_draft", "calendar_names", "mailbox_names", "calendar_list", "calendar_upsert"] },
     ],
     ...overrides,
   });
@@ -66,6 +66,9 @@ export function mockLocalApps({
     async outlookSend(request) {
       sends.push(request);
       throw new Error("iMessage/Outlook send must not be used by the Lindy bridge");
+    },
+    async calendarNames() {
+      return { ok: true, client: "calendar", calendars: [{ name: "CVS" }, { name: "Home" }] };
     },
     async calendarList() {
       return {

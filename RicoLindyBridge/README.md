@@ -30,6 +30,8 @@ Same bearer token and the same workflow allowlist.
 | `outlook_search` | Outlook | Filter that bounded inbox list by subject/from. |
 | `outlook_get` | Outlook | One inbox message by id. Body truncated. |
 | `outlook_draft` | Outlook | Create a draft to an approved recipient. Does **not** send. |
+| `calendar_names` | Calendar.app | Exact calendar names list/upsert can query. |
+| `mailbox_names` | Outlook | Queryable mailbox names (Inbox only). |
 | `calendar_list` | Calendar.app | Bounded upcoming events. |
 | `calendar_upsert` | Calendar.app | Create/update one local event. No attendees. |
 

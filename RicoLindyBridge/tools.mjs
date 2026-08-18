@@ -45,6 +45,10 @@ export async function callBridgeTool(runtime, name, args = {}) {
       return apps.outlookGet({ id: sanitizeMessageId(args.id) });
     case "outlook_draft":
       return outlookDraft(runtime, apps, args);
+    case "calendar_names":
+      return apps.calendarNames();
+    case "mailbox_names":
+      return lindyMailboxNames();
     case "calendar_list":
       return apps.calendarList({
         days: args.days ?? DEFAULT_CALENDAR_DAYS,
@@ -102,6 +106,13 @@ async function outlookDraft(runtime, apps, args) {
     subject: sanitizeSubject(args.subject),
     text: sanitizeBody(args.text),
   });
+}
+
+function lindyMailboxNames() {
+  return {
+    ok: true,
+    mailboxes: [{ client: "outlook", name: "Inbox", queryTool: "outlook_list_inbox" }],
+  };
 }
 
 function calendarUpsert(apps, args) {

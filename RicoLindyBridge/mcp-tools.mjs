@@ -88,6 +88,28 @@ export const MCP_TOOL_DEFINITIONS = Object.freeze([
     annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
   {
+    name: "calendar_names",
+    description: "List exact Calendar.app calendar names on original Rico that calendar_list and calendar_upsert can query. Names only. No events.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { workflowId },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "mailbox_names",
+    description: "List mailbox names the Lindy local bridge can query on original Rico. Outlook Inbox only. Names only. Not a message scrape.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { workflowId },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "calendar_list",
     description: "List upcoming Calendar.app events in a bounded window on original Rico. No attendees.",
     inputSchema: {

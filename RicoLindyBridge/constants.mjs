@@ -19,6 +19,8 @@ export const BRIDGE_TOOLS = Object.freeze([
   "outlook_search",
   "outlook_get",
   "outlook_draft",
+  "calendar_names",
+  "mailbox_names",
   "calendar_list",
   "calendar_upsert",
 ]);

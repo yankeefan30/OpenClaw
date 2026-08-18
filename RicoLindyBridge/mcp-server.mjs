@@ -31,7 +31,7 @@ export class RicoLindyMcpServer {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        instructions: "Thin local bridge on original Rico.local. Tools: health, outlook_list_inbox, outlook_search, outlook_get, outlook_draft (no send), calendar_list, calendar_upsert (no attendees). Lindy is the speaker. iMessage, Apple Mail, outlook_send, Teams, Slack, and general chat are not on this server. This is not the OpenClaw Gateway.",
+        instructions: "Thin local bridge on original Rico.local. Tools: health, mailbox_names, outlook_list_inbox, outlook_search, outlook_get, outlook_draft (no send), calendar_names, calendar_list, calendar_upsert (no attendees). Lindy is the speaker. iMessage, Apple Mail, outlook_send, Teams, Slack, and general chat are not on this server. This is not the OpenClaw Gateway.",
       });
     }
     if (message.method === "notifications/initialized" || message.method === "notifications/cancelled") return null;

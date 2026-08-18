@@ -12,6 +12,8 @@ test("catalog is mail/calendar only and excludes iMessage and chat", () => {
     "outlook_search",
     "outlook_get",
     "outlook_draft",
+    "calendar_names",
+    "mailbox_names",
     "calendar_list",
     "calendar_upsert",
   ]);
@@ -19,6 +21,16 @@ test("catalog is mail/calendar only and excludes iMessage and chat", () => {
     assert.equal(isForbiddenTool(name), true);
     assert.equal(names.includes(name), false);
   }
+});
+
+test("name catalogs return queryable Calendar.app and Outlook Inbox names only", async () => {
+  const runtime = testRuntime();
+  const calendars = await callBridgeTool(runtime, "calendar_names", {});
+  assert.deepEqual(calendars.calendars, [{ name: "CVS" }, { name: "Home" }]);
+  const mailboxes = await callBridgeTool(runtime, "mailbox_names", {});
+  assert.deepEqual(mailboxes.mailboxes, [
+    { client: "outlook", name: "Inbox", queryTool: "outlook_list_inbox" },
+  ]);
 });
 
 test("approved Outlook read and Calendar write stay on local clients", async () => {

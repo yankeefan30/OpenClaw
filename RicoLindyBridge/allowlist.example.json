@@ -16,7 +16,7 @@
   "workflows": [
     {
       "id": "lindy-cvs-mail-read",
-      "tools": ["health", "outlook_list_inbox", "outlook_search", "outlook_get"]
+      "tools": ["health", "mailbox_names", "outlook_list_inbox", "outlook_search", "outlook_get"]
     },
     {
       "id": "lindy-cvs-mail-draft",
@@ -24,7 +24,7 @@
     },
     {
       "id": "lindy-cvs-calendar",
-      "tools": ["health", "calendar_list", "calendar_upsert"]
+      "tools": ["health", "calendar_names", "calendar_list", "calendar_upsert"]
     },
     {
       "id": "lindy-mcp",
@@ -34,6 +34,8 @@
         "outlook_search",
         "outlook_get",
         "outlook_draft",
+        "calendar_names",
+        "mailbox_names",
         "calendar_list",
         "calendar_upsert"
       ]

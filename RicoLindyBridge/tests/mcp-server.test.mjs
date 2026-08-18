@@ -31,6 +31,8 @@ test("MCP lists only mail/calendar tools and defaults to the lindy-mcp workflow"
     "outlook_search",
     "outlook_get",
     "outlook_draft",
+    "calendar_names",
+    "mailbox_names",
     "calendar_list",
     "calendar_upsert",
   ]);
