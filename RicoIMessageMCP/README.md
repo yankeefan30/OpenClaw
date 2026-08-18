@@ -22,6 +22,8 @@ OpenTable MCP and Uber MCP stay disabled. SIP is unchanged. Twilio/A2P Funnel on
 | `rico_mail_list_inbox` | Bounded recent Apple Mail inbox metadata (default/max 15). Not a mailbox scrape. |
 | `rico_mail_get` | One inbox message by id. Body truncated. |
 | `rico_mail_send` | Send/reply from Mail.app **only** to an allowlisted address (person-email authorization, owner account, or recipient-guard email). |
+| `rico_calendar_names` | Exact Calendar.app calendar names that list/upsert can query. |
+| `rico_mailbox_names` | Mailbox names the connector can query (Mail Inbox; Outlook Inbox if installed). |
 | `rico_calendar_list` | Upcoming Calendar.app events in a bounded window (default 7 days, max 14; max 25 events). |
 | `rico_calendar_upsert` | Create or update one local event on a named calendar. No attendees. |
 | `rico_outlook_list_inbox` | Bounded recent Outlook inbox metadata. Clear error if Outlook is missing. |
@@ -135,7 +137,7 @@ Confirm with `tailscale funnel status` that `443` lists `/rico-mcp` **and** `/we
 | **HTTPS endpoint** | `https://rico.tail434bbe.ts.net:8444/mcp` |
 | **Authentication** | **Bearer token** |
 | **Bearer token** | Contents of `~/Library/Application Support/OpenClaw Studio/secrets/rico-imessage-mcp.token` — paste in that field only |
-| **Tools** | `rico_imessage_send`, `rico_mail_send`, `rico_outlook_send`, `rico_calendar_upsert` → **Ask**. Health/list/get/`can_send` may stay **On**. |
+| **Tools** | `rico_imessage_send`, `rico_mail_send`, `rico_outlook_send`, `rico_calendar_upsert` → **Ask**. Health/list/get/`can_send`/names may stay **On**. |
 
 Do not paste the token into a Runner session. Runner encrypts the Connected Apps field and does not show it again.
 

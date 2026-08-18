@@ -101,6 +101,24 @@ export function createLocalApps({
       });
     },
 
+    async calendarNames() {
+      const output = await runApp(runner, calendarNamesScript(), "calendar", 20_000);
+      const parsed = parseOkRecords(output, 1);
+      return {
+        ok: true,
+        client: "calendar",
+        calendars: parsed.rows.map(([name]) => ({ name: clipText(name, 80) })),
+      };
+    },
+
+    async mailboxNames() {
+      const mailboxes = [{ client: "mail", name: "Inbox", queryTool: "rico_mail_list_inbox" }];
+      if (await outlookIsInstalled(outlookAppPath)) {
+        mailboxes.push({ client: "outlook", name: "Inbox", queryTool: "rico_outlook_list_inbox" });
+      }
+      return { ok: true, mailboxes };
+    },
+
     async calendarList({ days = DEFAULT_CALENDAR_DAYS, calendar } = {}) {
       const windowDays = boundedDays(days);
       const start = now();
@@ -500,6 +518,18 @@ end tell`;
 function calendarHealthScript() {
   return `tell application "${CALENDAR_APP}"
 return "RICO_OK" & linefeed & (count of calendars as text)
+end tell`;
+}
+
+function calendarNamesScript() {
+  return `${helpersScript()}
+tell application "${CALENDAR_APP}"
+set rows to {}
+repeat with cal in calendars
+set end of rows to my clipText(name of cal as text, 80)
+end repeat
+set AppleScript's text item delimiters to character id 30
+return "RICO_OK" & linefeed & ((count of rows) as text) & linefeed & ((count of rows) as text) & linefeed & (rows as text)
 end tell`;
 }
 

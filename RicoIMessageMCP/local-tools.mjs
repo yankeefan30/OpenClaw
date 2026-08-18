@@ -66,6 +66,18 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
     annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
   {
+    name: "rico_calendar_names",
+    description: "List exact Calendar.app calendar names that rico_calendar_list and rico_calendar_upsert can query. Names only. No events.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_mailbox_names",
+    description: "List mailbox names the Rico MCP connector can query (Apple Mail Inbox; Outlook Inbox when Outlook is installed). Names only. Not a message scrape.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "rico_calendar_list",
     description: "List upcoming Calendar.app events in a bounded window. Optional calendar name limits the search.",
     inputSchema: {
@@ -160,6 +172,10 @@ export async function callLocalTool(runtime, name, args) {
       return apps.mailGet({ id: sanitizeMessageId(args?.id) });
     case "rico_mail_send":
       return mailSend(runtime, apps, args);
+    case "rico_calendar_names":
+      return apps.calendarNames();
+    case "rico_mailbox_names":
+      return apps.mailboxNames();
     case "rico_calendar_list":
       return apps.calendarList({
         days: args?.days ?? DEFAULT_CALENDAR_DAYS,

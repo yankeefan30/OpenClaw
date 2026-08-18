@@ -36,6 +36,27 @@ test("Mail list and get stay bounded and use the injected runner", async () => {
   assert.equal(scripts.length, 2);
 });
 
+test("Calendar and mailbox name catalogs stay names-only", async () => {
+  const apps = createLocalApps({
+    outlookAppPath: "/tmp/rico-outlook-missing",
+    runner: async (script) => {
+      if (script.includes("repeat with cal in calendars") && script.includes("clipText(name of cal as text, 80)") && !script.includes("every event of cal")) {
+        return `RICO_OK\n2\n2\nHome\u001eWork`;
+      }
+      throw new Error("unexpected catalog script");
+    },
+  });
+
+  const calendars = await callTool({ localApps: apps }, "rico_calendar_names", {});
+  assert.deepEqual(calendars.calendars, [{ name: "Home" }, { name: "Work" }]);
+  assert.ok(!JSON.stringify(calendars).includes("Dentist"));
+
+  const mailboxes = await callTool({ localApps: apps }, "rico_mailbox_names", {});
+  assert.deepEqual(mailboxes.mailboxes, [
+    { client: "mail", name: "Inbox", queryTool: "rico_mail_list_inbox" },
+  ]);
+});
+
 test("Calendar upsert and list go through the mocked AppleScript runner", async () => {
   const apps = createLocalApps({
     outlookAppPath: "/tmp/rico-outlook-missing",
