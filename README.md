@@ -145,6 +145,16 @@ xAI video API or guess selectors. The tab can be installed for status and UI
 review, but Capture stays disabled until the bounded worker proves both exact
 visible labels and the reviewed Rico attachment Gateway contract exists.
 
+## Mac mini shell keep-alive
+
+The bundled `RicoMacMiniShellKeepAlive` helper is a 180-second one-shot
+recovery job, not a busy loop. It refreshes an AC-power `caffeinate -s`
+assertion so Rico's Mac mini does not idle-sleep, and it restarts only an
+already-installed `ai.openclaw.node` shell host when last-seen is stale.
+It does not install a second node identity, touch the Gateway, or send
+messages. The LaunchAgent stays unloaded until an operator reviews
+`RicoMacMiniShellKeepAlive/DEPLOYMENT.md`.
+
 Install and rollback use only signed, bundled resources. Rollback is
 manifest-scoped, moves owned code and private runtime state to Trash, preserves
 dated capture media, touches no unrelated OpenClaw state, and installs no
@@ -166,6 +176,7 @@ node --test IMsgOwnerRoute/imsg-owner-route.test.mjs
 (cd JanetReceiptWorkflow && npm test)
 (cd OutlookMailMonitor && npm test)
 (cd BadRudyRuntime && npm test)
+(cd RicoMacMiniShellKeepAlive && npm test && npm run check)
 (cd workers/grok-companions && npm test && npm run typecheck && npm run selftest)
 swift run --disable-sandbox OpenClawStudioFixtures
 ```
