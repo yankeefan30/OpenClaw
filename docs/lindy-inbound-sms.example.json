@@ -1,0 +1,37 @@
+{
+  "purpose": "Shape only. Copy off-git if Polar needs a checklist. Never put live numbers or tokens here.",
+  "agent": "Rico custom Lindy agent. Do not use the default Lindy assistant.",
+  "channel": "text",
+  "lindyPhonePurchasedLine": {
+    "action": "keep",
+    "doNotRelease": true,
+    "doNotBuyAnotherLindyNumber": true,
+    "canReceiveInboundSmsToRico": false
+  },
+  "defaultAssistantTextPath": {
+    "settings": "Settings → General → Text message service",
+    "rebindToRico": false
+  },
+  "workingInboundText": {
+    "requiresAlanAuthorization": true,
+    "provider": "twilio",
+    "trigger": "SMS Received",
+    "replyAction": "Send SMS Message",
+    "numberOwner": "the SMS provider, not Lindy Phone",
+    "docs": "https://docs.lindy.ai/skills/popular-integrations/twilio"
+  },
+  "admission": {
+    "source": "Rico console OpenClaw vip-directs / Contacts / send-guard only",
+    "strangers": "fail closed",
+    "ricoStartsThreads": false,
+    "writeNumbersIntoRepoOrLindyByHand": false
+  },
+  "doNot": [
+    "edit Rico Context or Greeting",
+    "start iMessage or the OpenClaw Gateway",
+    "work on Rico 2",
+    "connect CVS Slack, Teams, Microsoft, or CVS Google to Lindy",
+    "connect Twilio until Alan authorizes it",
+    "put secrets in git"
+  ]
+}
