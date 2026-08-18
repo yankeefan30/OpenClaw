@@ -43,6 +43,8 @@ test("MCP server initializes and lists Rico iMessage plus local-app tools", asyn
     "rico_mail_list_inbox",
     "rico_mail_get",
     "rico_mail_send",
+    "rico_calendar_names",
+    "rico_mailbox_names",
     "rico_calendar_list",
     "rico_calendar_upsert",
     "rico_outlook_list_inbox",
