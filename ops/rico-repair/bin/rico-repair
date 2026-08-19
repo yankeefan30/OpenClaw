@@ -20,13 +20,16 @@ TARGET_USER="alan"
 SSH_KEY="${RICO_REPAIR_SSH_KEY:-${HOME}/.ssh/rico2-to-rico}"
 TARGETS=(192.168.4.118 Rico.local 100.98.73.107)
 CONNECT_TIMEOUT=8
-WATCH_INTERVAL=60
+WATCH_INTERVAL=600
 COOLDOWN_SECONDS=600
 
 CONFIG_DIR="${HOME}/.config/rico-repair"
 STATE_FILE="${CONFIG_DIR}/state"
 LOCK_DIR="${CONFIG_DIR}/watch.lock"
 LOG_FILE="${HOME}/Library/Logs/rico-repair.log"
+ALERT_DIR="${HOME}/.local/state/rico-repair"
+ALERT_FILE="${ALERT_DIR}/ALERT"
+ALERT_LOG_COPY="${HOME}/Library/Logs/rico-repair-alert"
 LAST_TARGET_FILE="${CONFIG_DIR}/last-target"
 
 usage() {
@@ -38,8 +41,8 @@ Commands:
   restart-gateway    kickstart ai.openclaw.gateway on Rico only
   restart-grokbot    Quit/reopen Grok Bot on Rico (wake-desktop alias)
   restart-lmstudio   Reopen Bionic.app only if :1234 process is dead
-  watch-once         One monitor tick (LaunchAgent)
-  watch              Foreground 60s loop
+  watch-once         One monitor tick (LaunchAgent, every 10 min)
+  watch              Foreground 10-minute loop
   self-check         Local safety checks, no SSH
 
 SSH targets in order: 192.168.4.118, Rico.local, 100.98.73.107
@@ -96,7 +99,23 @@ require_hop_host() {
 ensure_dirs() {
   /bin/mkdir -p "$CONFIG_DIR"
   /bin/chmod 700 "$CONFIG_DIR" 2>/dev/null || true
+  /bin/mkdir -p "$ALERT_DIR"
+  /bin/chmod 700 "$ALERT_DIR" 2>/dev/null || true
   /bin/mkdir -p "$(dirname -- "$LOG_FILE")"
+}
+
+write_alert() {
+  local body="$1"
+  ensure_dirs
+  printf '%s\n' "$body" > "$ALERT_FILE"
+  /bin/chmod 600 "$ALERT_FILE" 2>/dev/null || true
+  printf '%s\n' "$body" > "$ALERT_LOG_COPY"
+  /bin/chmod 600 "$ALERT_LOG_COPY" 2>/dev/null || true
+  log "ALERT ${body}"
+}
+
+clear_alert() {
+  /bin/rm -f "$ALERT_FILE" "$ALERT_LOG_COPY"
 }
 
 state_get() {
@@ -444,7 +463,7 @@ maybe_act() {
     log "cooldown skip ${action} (${reason})"
     return 0
   fi
-  log "trigger ${action} (${reason})"
+  log "run ${action} (${reason})"
   local out rc=0
   out="$(rico_remote "$action")" || rc=$?
   printf '%s\n' "$out"
@@ -458,12 +477,18 @@ cmd_watch_once() {
     return 0
   fi
   trap release_lock EXIT
-  local out healthz grokbot alive
+  local out healthz grokbot alive problems actions
   out="$(rico_remote status)" || true
   printf '%s\n' "$out"
   state_set last_poll_at "$(now_iso)"
   if ! printf '%s\n' "$out" | /usr/bin/grep -q '^host=Rico$'; then
-    log "no Rico hostname in status; skip triggers"
+    write_alert "$(printf '%s\n' \
+      "status=ALERT" \
+      "at=$(now_iso)" \
+      "hop=${HOP_REQUIRED}" \
+      "problem=no-rico-status" \
+      "detail=hop could not prove LocalHostName=Rico; no repair run" \
+      "actions=none")"
     release_lock
     trap - EXIT
     return 1
@@ -474,6 +499,39 @@ cmd_watch_once() {
   state_set last_healthz "$healthz"
   state_set last_grokbot "$grokbot"
   state_set last_lmstudio_alive "$alive"
+  problems=""
+  actions=""
+  if [ "$healthz" != "live" ]; then
+    problems="${problems} healthz=${healthz:-down}"
+    actions="${actions} restart-gateway"
+  fi
+  if [ "$grokbot" != "running" ]; then
+    problems="${problems} grokbot=${grokbot:-missing}"
+    actions="${actions} restart-grokbot"
+  fi
+  if [ "$alive" = "no" ]; then
+    problems="${problems} lmstudio=dead"
+    actions="${actions} restart-lmstudio"
+  fi
+  problems="${problems# }"
+  actions="${actions# }"
+  if [ -z "$problems" ]; then
+    log "ok healthz=live grokbot=running lmstudio_alive=${alive:-yes}"
+    clear_alert
+    release_lock
+    trap - EXIT
+    return 0
+  fi
+  write_alert "$(printf '%s\n' \
+    "status=ALERT" \
+    "at=$(now_iso)" \
+    "hop=${HOP_REQUIRED}" \
+    "healthz=${healthz:-unknown}" \
+    "grokbot=${grokbot:-unknown}" \
+    "lmstudio_alive=${alive:-unknown}" \
+    "problems=${problems}" \
+    "actions=${actions}" \
+    "next=Goon: cat ${ALERT_FILE} ; rico-repair already invoked for matching actions if cooldown allows")"
   if [ "$healthz" != "live" ]; then
     maybe_act restart-gateway "healthz=${healthz:-down}" || true
   fi
@@ -522,7 +580,10 @@ cmd_self_check() {
   echo "targets: ${TARGETS[*]}"
   echo "remote kit: ${REMOTE_KIT}"
   echo "log: ${LOG_FILE}"
+  echo "alert flag: ${ALERT_FILE}"
+  echo "alert copy: ${ALERT_LOG_COPY}"
   echo "state: ${STATE_FILE}"
+  echo "interval: ${WATCH_INTERVAL}s (LaunchAgent StartInterval 600)"
   return "$failed"
 }
 

@@ -31,8 +31,12 @@ On **Rico 2**:
 /Users/alan/ops/rico-repair/bin/rico-repair  # CLI
 /Users/alan/Library/LaunchAgents/ai.polar.rico-repair.plist
 ~/Library/Logs/rico-repair.log
+~/Library/Logs/rico-repair-alert          # current ALERT copy Goon can open
+~/.local/state/rico-repair/ALERT          # flag file; present only when last tick was bad
 ~/.config/rico-repair/state
 ```
+
+**Polar stays off Rico 2.** Polar's job is original Rico only (`authorized_keys` + optional kit). Goon owns this hop, the CLI, and the LaunchAgent on Rico 2.
 
 On **Rico** (Polar lands this; hop calls it by name):
 
@@ -70,6 +74,8 @@ Expected algorithm: ED25519. Polar compares that fingerprint after landing the
 public key on Rico.
 
 ## What Polar must land on Rico
+
+Polar does this on **original Rico only**. Polar does not log into Rico 2 and does not load the LaunchAgent.
 
 1. **authorized_keys** — append the **public** key line from Rico 2
    (`~/.ssh/rico2-to-rico.pub`). Suggested options (still allows `ssh host cmd`):
@@ -119,25 +125,43 @@ On Rico 2:
 ```
 
 `wake-desktop` is an alias of `restart-grokbot` (Goon v1 name). Manual restart
-commands do not use the 10-minute cooldown. The monitor does.
+commands do not use the 10-minute cooldown. The scheduler does.
 
-## Monitor / LaunchAgent
+## Monitor / LaunchAgent (Goon, Rico 2 only)
 
-Listener lives on Rico 2 only. Shape: **one-shot `watch-once` every 60s**
-(`StartInterval` + `RunAtLoad`). No KeepAlive loop, no sockets, no `0.0.0.0`
-bind, no cloud relay.
+Goon loads this LaunchAgent on **Rico 2**. Polar does not. Shape: one-shot
+`watch-once` every **10 minutes** (`StartInterval = 600` + `RunAtLoad`). No
+KeepAlive loop, no sockets, no `0.0.0.0` bind, no cloud relay, no mail, no
+iMessage.
 
-Triggers (after a successful `host=Rico` status):
+Each tick checks original Rico through the hop (hostname-gated):
 
-- `healthz` not `live` → `restart-gateway` (`launchctl kickstart -k gui/501/ai.openclaw.gateway`, then re-probe). Will not start a second gateway by hand.
-- Grok Bot process missing on Rico → `restart-grokbot` (quit if running, then `open` the exact app).
-- `:1234` **process dead** (no `127.0.0.1:1234` LISTEN and no `llmster` / Bionic process) → reopen `Bionic.app` only. A slow but living server is left alone. No model downloads.
+- gateway `http://127.0.0.1:18789/healthz` (expect `live`)
+- Grok Bot desktop process
+- Qwen/LM Studio `:1234` process (`llmster` / `127.0.0.1:1234` LISTEN)
 
-Cooldown: **10 minutes per action type**, stored in
-`~/.config/rico-repair/state`. Overlapping ticks share a lock. Log:
-`~/Library/Logs/rico-repair.log`.
+**If everything is fine:** log `ok` and do nothing else. No ALERT file.
 
-### Load on Rico 2
+**If something is off:** write a local ALERT Goon can see, then run this same
+`rico-repair` script for the matching action(s):
+
+- `healthz` not `live` → `restart-gateway`
+- Grok Bot process missing → `restart-grokbot`
+- `:1234` **process dead** → `restart-lmstudio` (Bionic.app only; slow-but-alive is left alone)
+
+ALERT locations on Rico 2 (no network send):
+
+```
+~/.local/state/rico-repair/ALERT
+~/Library/Logs/rico-repair-alert
+~/Library/Logs/rico-repair.log          # line starts with ALERT
+```
+
+A later healthy tick removes the ALERT flag files. Cooldown is **10 minutes
+per action type** so a still-bad service is not restart-looped. The next tick
+still refreshes the ALERT so Goon can see it.
+
+### Load on Rico 2 (Goon)
 
 ```sh
 plutil -lint /Users/alan/ops/rico-repair/launchd/ai.polar.rico-repair.plist
@@ -149,7 +173,8 @@ launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/ai.polar.rico-repair.p
 launchctl kickstart "gui/$(id -u)/ai.polar.rico-repair"
 ```
 
-Do this only after `status` works. Do not load the plist on Rico.
+Do this only after `status` works. Do not load the plist on original Rico.
+Polar stays off Rico 2.
 
 ### Unload
 
@@ -169,12 +194,14 @@ These commands never send Messages, Mail, Outlook, or `openclaw --deliver`:
 /Users/alan/ops/rico-repair/bin/rico-repair status
 /Users/alan/ops/rico-repair/bin/rico-repair watch-once
 tail -n 50 ~/Library/Logs/rico-repair.log
+test -f ~/.local/state/rico-repair/ALERT && cat ~/.local/state/rico-repair/ALERT
 cat ~/.config/rico-repair/state
 ```
 
 `status` should show `host=Rico`, `healthz=live` or `down`, Grok Bot
-running/missing, and `lmstudio_alive`. `watch-once` may kickstart or reopen
-only when those probes fail and cooldown allows. There is no speaker.
+running/missing, and `lmstudio_alive`. A healthy `watch-once` only logs `ok`.
+A bad tick writes the ALERT flag, then runs the matching command if cooldown
+allows. There is no speaker.
 
 Repo check (any host with bash):
 

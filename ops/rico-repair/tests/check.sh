@@ -83,10 +83,12 @@ else
   fail "no password material"
 fi
 
-if grep -q 'StartInterval' "$PLIST" && grep -q 'watch-once' "$PLIST" && grep -q '/Users/alan/ops/rico-repair/bin/rico-repair' "$PLIST"; then
-  pass "LaunchAgent one-shot interval"
+if grep -q '<integer>600</integer>' "$PLIST" && grep -q 'watch-once' "$PLIST" \
+  && grep -q '/Users/alan/ops/rico-repair/bin/rico-repair' "$PLIST" \
+  && grep -q 'WATCH_INTERVAL=600' "$HOP"; then
+  pass "LaunchAgent 10-minute interval"
 else
-  fail "LaunchAgent one-shot interval"
+  fail "LaunchAgent 10-minute interval"
 fi
 
 if grep -q 'Sockets' "$PLIST" || grep -q '0.0.0.0' "$PLIST" || grep -q 'KeepAlive' "$PLIST"; then
@@ -153,7 +155,10 @@ assert_eq "$(kv_get $'healthz=live\ngrokbot=running\n' grokbot)" "running" "kv_g
 
 CONFIG_DIR="${tmp}/.config/rico-repair"
 STATE_FILE="${CONFIG_DIR}/state"
-mkdir -p "$CONFIG_DIR"
+ALERT_DIR="${tmp}/.local/state/rico-repair"
+ALERT_FILE="${ALERT_DIR}/ALERT"
+ALERT_LOG_COPY="${tmp}/Library/Logs/rico-repair-alert"
+mkdir -p "$CONFIG_DIR" "$ALERT_DIR" "$(dirname "$ALERT_LOG_COPY")"
 now="$(date +%s)"
 state_set cooldown_restart-gateway "$((now - 100))"
 if cooldown_ok restart-gateway; then
@@ -224,11 +229,36 @@ if [ -z "$(state_get cooldown_restart-gateway)" ]; then
 else
   fail "failed poll does not start cooldown"
 fi
+if [ -f "$ALERT_FILE" ] && grep -q 'problem=no-rico-status' "$ALERT_FILE"; then
+  pass "unreachable hop writes ALERT"
+else
+  fail "unreachable hop writes ALERT"
+fi
+
+rico_remote() {
+  printf '%s\n' 'host=Rico' 'healthz=live' 'grokbot=running' 'lmstudio_alive=yes'
+}
+cmd_watch_once >/tmp/rico-repair-watch.out 2>&1 || true
+if [ ! -f "$ALERT_FILE" ] && [ ! -f "$ALERT_LOG_COPY" ]; then
+  pass "healthy tick clears ALERT"
+else
+  fail "healthy tick clears ALERT"
+fi
+if [ -z "$(state_get cooldown_restart-gateway)" ]; then
+  pass "healthy tick does not run repair"
+else
+  fail "healthy tick does not run repair"
+fi
 
 rico_remote() {
   printf '%s\n' 'host=Rico' 'healthz=down' 'grokbot=running' 'lmstudio_alive=yes' 'result=ok'
 }
 cmd_watch_once >/tmp/rico-repair-watch.out 2>&1 || true
+if [ -f "$ALERT_FILE" ] && grep -q 'actions=restart-gateway' "$ALERT_FILE"; then
+  pass "bad tick writes ALERT then runs matching action"
+else
+  fail "bad tick writes ALERT then runs matching action"
+fi
 if [ -n "$(state_get cooldown_restart-gateway)" ]; then
   pass "watch-once cooldown after gateway trigger"
 else
@@ -238,6 +268,18 @@ if [ -z "$(state_get cooldown_restart-grokbot)" ] && [ -z "$(state_get cooldown_
   pass "healthy grokbot/lmstudio not restarted"
 else
   fail "healthy grokbot/lmstudio not restarted"
+fi
+
+rico_remote() {
+  printf '%s\n' 'host=Rico' 'healthz=down' 'grokbot=running' 'lmstudio_alive=yes' 'result=ok'
+}
+before="$(state_get cooldown_restart-gateway)"
+cmd_watch_once >/tmp/rico-repair-watch.out 2>&1 || true
+after="$(state_get cooldown_restart-gateway)"
+if [ "$before" = "$after" ] && [ -f "$ALERT_FILE" ]; then
+  pass "cooldown skip still keeps ALERT"
+else
+  fail "cooldown skip still keeps ALERT"
 fi
 
 rm -rf "$tmp"
