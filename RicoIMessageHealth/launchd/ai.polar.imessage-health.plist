@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.polar.imessage-health</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/alan/OpenClawStudio/RicoIMessageHealth/polar-imessage-health.zsh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/alan/OpenClawStudio/RicoIMessageHealth</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TZ</key>
+    <string>America/New_York</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/alan/Library/Logs/polar-imessage-health.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/alan/Library/Logs/polar-imessage-health.log</string>
+  <key>Umask</key>
+  <integer>18</integer>
+</dict>
+</plist>
