@@ -24,11 +24,12 @@ refuses to run unless the hop host is `Rico-2`.
 
 ## Copy paths
 
-On **Rico 2**:
+On **Rico 2** (Goon lands this):
 
 ```
 /Users/alan/ops/rico-repair/                 # this directory
-/Users/alan/ops/rico-repair/bin/rico-repair  # CLI
+/Users/alan/ops/rico-repair/bin/rico-repair  # CLI (Rico 2 → Rico)
+/Users/alan/Library/Scripts/rico-repair-peer-kit.sh   # optional named receiver
 /Users/alan/Library/LaunchAgents/ai.polar.rico-repair.plist
 ~/Library/Logs/rico-repair.log
 ~/Library/Logs/rico-repair-alert          # current ALERT copy Goon can open
@@ -38,10 +39,11 @@ On **Rico 2**:
 
 **Polar stays off Rico 2.** Polar's job is original Rico only (`authorized_keys` + optional kit). Goon owns this hop, the CLI, and the LaunchAgent on Rico 2.
 
-On **Rico** (Polar lands this; hop calls it by name):
+On **Rico** (Polar lands these; Polar stays off Rico 2):
 
 ```
-/Users/alan/Library/Scripts/rico-repair-kit.sh
+/Users/alan/Library/Scripts/rico-repair-kit.sh          # Rico 2 → Rico named kit
+/Users/alan/Library/Scripts/rico-repair-peer            # Rico → Rico 2 CLI
 ```
 
 If the kit is missing, the hop falls back to the bundled kit over SSH stdin,
@@ -98,7 +100,20 @@ Polar does this on **original Rico only**. Polar does not log into Rico 2 and do
 
    The kit must print `host=Rico` and exit 78 on any other LocalHostName.
 
-3. Seed `known_hosts` on Rico 2 **before** loading launchd (BatchMode will
+3. **Peer CLI** (Rico → Rico 2 Grok Bot restart). Polar already has SSH
+   Rico → Rico 2; do not put a password in this file:
+
+   ```sh
+   install -m 700 bin/rico-repair-peer /Users/alan/Library/Scripts/rico-repair-peer
+   /Users/alan/Library/Scripts/rico-repair-peer self-check
+   /Users/alan/Library/Scripts/rico-repair-peer restart-grokbot-on-rico2
+   ```
+
+   This host must be `Rico`. Remote must be `Rico-2`. If
+   `/Applications/Grok Bot.app` is missing on Rico 2, it reports
+   `not-installed` and stops.
+
+4. Seed `known_hosts` on Rico 2 **before** loading launchd (BatchMode will
    otherwise fail on an unknown host key):
 
    ```sh
@@ -113,19 +128,29 @@ key `~/.ssh/rico2-to-rico`. Password auth is off.
 
 ## CLI
 
-On Rico 2:
+On **Rico 2** (Goon):
 
 ```sh
 /Users/alan/ops/rico-repair/bin/rico-repair status
 /Users/alan/ops/rico-repair/bin/rico-repair restart-gateway
-/Users/alan/ops/rico-repair/bin/rico-repair restart-grokbot
+/Users/alan/ops/rico-repair/bin/rico-repair restart-grokbot   # fix Grok Bot on Rico
 /Users/alan/ops/rico-repair/bin/rico-repair watch-once
 /Users/alan/ops/rico-repair/bin/rico-repair watch          # foreground loop
 /Users/alan/ops/rico-repair/bin/rico-repair self-check     # no SSH
 ```
 
+On **original Rico** (Polar):
+
+```sh
+install -m 700 bin/rico-repair-peer /Users/alan/Library/Scripts/rico-repair-peer
+/Users/alan/Library/Scripts/rico-repair-peer restart-grokbot-on-rico2
+# same command via the hop CLI if the folder is also on Rico:
+/Users/alan/ops/rico-repair/bin/rico-repair restart-grokbot-peer
+```
+
 `wake-desktop` is an alias of `restart-grokbot` (Goon v1 name). Manual restart
-commands do not use the 10-minute cooldown. The scheduler does.
+commands do not use the 10-minute cooldown. The Rico 2 scheduler does.
+Polar-side watch is **not** required in this pass.
 
 ## Monitor / LaunchAgent (Goon, Rico 2 only)
 
@@ -209,21 +234,49 @@ Repo check (any host with bash):
 ops/rico-repair/tests/check.sh
 ```
 
-## Grok Bot / Bionic discovery
+## Bidirectional Grok Bot restart
 
-The kit looks for an exact **Grok Bot.app** (pin, `/Applications`,
-`~/Applications`, then `mdfind` on that filename). It will not launch
-`Cursor.app` or invent a bundle id. If more than one candidate exists, it
-logs them and refuses.
-
-Pin on Rico if needed:
+Verified on original Rico (do not invent another path):
 
 ```
-~/.config/rico-repair/grokbot-app     # one line, e.g. /Applications/Grok Bot.app
+/Applications/Grok Bot.app
+```
+
+Display name **Grok Bot**, Electron, user-data-dir
+`/Users/alan/Library/Application Support/Grok Bot`, version seen 0.20.0.
+Both directions pin that path. Restart is: quit the `Grok Bot.app` process
+tree (`pkill` TERM, wait, KILL if needed), then
+`open -a "/Applications/Grok Bot.app"`. No AppleScript UI. No `Cursor.app`.
+If the pinned app is missing on that Mini, the script reports
+`result=not-installed` and does not invent another app.
+
+| Direction | Who runs it | Host gate | Remote gate | Command |
+| --- | --- | --- | --- | --- |
+| Rico 2 → Rico | Goon / LaunchAgent | `Rico-2` | `Rico` | `rico-repair restart-grokbot` |
+| Rico → Rico 2 | Polar | `Rico` | `Rico-2` | `rico-repair-peer restart-grokbot-on-rico2` |
+
+Rico → Rico 2 SSH targets, in order: `192.168.4.246`, `Rico-2.local`,
+`100.73.16.116`, user `alan`. Polar already has this SSH. The peer script
+uses that existing key/config (BatchMode, password auth off). Optional
+`RICO_REPAIR_PEER_SSH_KEY` if Polar wants to pin a file. No password in
+any script.
+
+Goon may also drop `kit/rico-repair-peer-kit.sh` on Rico 2 at
+`/Users/alan/Library/Scripts/rico-repair-peer-kit.sh` so Polar calls it by
+name. If that file is missing, the peer falls back to the bundled kit, then
+inline allowlisted commands.
+
+The 10-minute LaunchAgent on Rico 2 still treats **Grok Bot missing on
+Rico** as today (ALERT, then `restart-grokbot`). It does not watch Rico 2's
+own Grok Bot.
+
+LM Studio pin (unchanged):
+
+```
 ~/.config/rico-repair/lmstudio-app    # one line, e.g. /Applications/Bionic.app
 ```
 
-Examples: `examples/grokbot-app.example`, `examples/lmstudio-app.example`.
+Example: `examples/lmstudio-app.example`.
 
 LM Studio hypothesis used here: **Bionic.app** hosts the local server;
 **llmster** listens on `127.0.0.1:1234`. Verify on Rico before the first
@@ -238,7 +291,7 @@ reopen. Do not restart a healthy slow model.
 - `curl -sS -m 5 http://127.0.0.1:1234/v1/models`
 - conservative Bionic reopen only when the local server process is dead
 - read `/Users/alan/Documents/Codex/rico-comms-monitor/state.json` if present (safe keys only)
-- Grok Bot quit/open
+- Grok Bot process-tree quit + `open -a "/Applications/Grok Bot.app"`
 - `df -h /`
 
 ## Forbidden (always)

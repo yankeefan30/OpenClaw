@@ -22,7 +22,7 @@ GATEWAY_LABEL="ai.openclaw.gateway"
 HEALTHZ_URL="http://127.0.0.1:18789/healthz"
 LMSTUDIO_URL="http://127.0.0.1:1234/v1/models"
 COMMS_STATE="/Users/alan/Documents/Codex/rico-comms-monitor/state.json"
-GROKBOT_PIN="${HOME}/.config/rico-repair/grokbot-app"
+GROKBOT_APP="/Applications/Grok Bot.app"
 LMSTUDIO_PIN="${HOME}/.config/rico-repair/lmstudio-app"
 CAFFEINATE_SECONDS=180
 
@@ -245,79 +245,29 @@ cmd_restart_lmstudio() {
   emit "result=reopened"
 }
 
-grokbot_pin_or_exact() {
-  local pin
-  pin="$(read_pin "$GROKBOT_PIN")"
-  if [ -n "$pin" ]; then
-    if [ -d "$pin" ]; then
-      printf '%s' "$pin"
-      return 0
-    fi
-    log "grokbot pin invalid: ${pin}"
-    return 1
-  fi
-  if [ -d "/Applications/Grok Bot.app" ]; then
-    printf '%s' "/Applications/Grok Bot.app"
-    return 0
-  fi
-  if [ -d "/Users/alan/Applications/Grok Bot.app" ]; then
-    printf '%s' "/Users/alan/Applications/Grok Bot.app"
-    return 0
-  fi
-  return 2
-}
-
-grokbot_mdfind_candidates() {
-  if [ ! -x /usr/bin/mdfind ]; then
-    return 0
-  fi
-  /usr/bin/mdfind 'kMDItemFSName == "Grok Bot.app"' 2>/dev/null | /usr/bin/grep '/Grok Bot.app$' | /usr/bin/sort -u || true
-}
-
-discover_grokbot_app() {
-  local exact rc candidates count
-  if exact="$(grokbot_pin_or_exact)"; then
-    printf '%s' "$exact"
-    return 0
-  else
-    rc=$?
-    if [ "$rc" -eq 1 ]; then
-      return 1
-    fi
-  fi
-  candidates="$(grokbot_mdfind_candidates)"
-  if [ -z "$candidates" ]; then
-    log "Grok Bot.app not found; pin ~/.config/rico-repair/grokbot-app with the exact app path"
-    return 1
-  fi
-  count="$(printf '%s\n' "$candidates" | /usr/bin/grep -c .)"
-  emit "grokbot_candidates=${count}" >&2 || true
-  printf '%s\n' "$candidates" | while IFS= read -r line; do
-    log "  candidate: ${line}"
-  done
-  if [ "$count" -eq 1 ]; then
-    printf '%s' "$candidates"
-    return 0
-  fi
-  log "Grok Bot.app is ambiguous (${count} candidates); pin ~/.config/rico-repair/grokbot-app"
-  return 1
+grokbot_installed() {
+  [ -d "$GROKBOT_APP" ]
 }
 
 grokbot_running() {
-  /usr/bin/pgrep -f '/Grok Bot.app/' >/dev/null 2>&1 \
-    || /usr/bin/pgrep -x 'Grok Bot' >/dev/null 2>&1
+  /usr/bin/pgrep -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 \
+    || /usr/bin/pgrep -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1
 }
 
 cmd_grokbot_status() {
-  local app="" running="missing"
+  local running="missing" installed="no"
+  if grokbot_installed; then
+    installed="yes"
+  fi
   if grokbot_running; then
     running="running"
   fi
   emit "grokbot=${running}"
-  if app="$(discover_grokbot_app)"; then
-    emit "grokbot_app=${app}"
-  else
-    emit "grokbot_app=unresolved"
+  emit "grokbot_app=${GROKBOT_APP}"
+  emit "grokbot_installed=${installed}"
+  if [ "$installed" != "yes" ]; then
+    emit "result=not-installed"
+    return 1
   fi
   if [ "$running" = "running" ]; then
     return 0
@@ -326,7 +276,8 @@ cmd_grokbot_status() {
 }
 
 quit_grokbot() {
-  /usr/bin/osascript -e 'tell application "Grok Bot" to quit' >/dev/null 2>&1 || true
+  /usr/bin/pkill -TERM -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+  /usr/bin/pkill -TERM -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if ! grokbot_running; then
@@ -334,21 +285,25 @@ quit_grokbot() {
     fi
     /bin/sleep 1
   done
+  /usr/bin/pkill -KILL -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+  /usr/bin/pkill -KILL -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
+  /bin/sleep 1
   if grokbot_running; then
-    log "Grok Bot still running after quit; not sending kill"
+    log "Grok Bot process tree still present after kill"
     return 1
   fi
 }
 
 cmd_restart_grokbot() {
-  local app
   emit "action=restart-grokbot"
-  if ! app="$(discover_grokbot_app)"; then
-    emit "grokbot_app=unresolved"
-    emit "result=no-app"
+  emit "grokbot_app=${GROKBOT_APP}"
+  if ! grokbot_installed; then
+    log "Grok Bot.app not installed at pinned path; not inventing another app"
+    emit "grokbot_installed=no"
+    emit "result=not-installed"
     return 1
   fi
-  emit "grokbot_app=${app}"
+  emit "grokbot_installed=yes"
   if grokbot_running; then
     if ! quit_grokbot; then
       emit "result=quit-failed"
@@ -358,7 +313,7 @@ cmd_restart_grokbot() {
   else
     emit "grokbot_quit=not-running"
   fi
-  /usr/bin/open "$app"
+  /usr/bin/open -a "$GROKBOT_APP"
   /bin/sleep 3
   if grokbot_running; then
     emit "grokbot=running"

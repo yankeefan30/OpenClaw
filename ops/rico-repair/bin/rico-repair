@@ -39,7 +39,8 @@ rico-repair — Rico 2 LAN hop (not OpenClaw, not iMessage)
 Commands:
   status             Probe Rico over SSH (read + caffeinate-if-needed)
   restart-gateway    kickstart ai.openclaw.gateway on Rico only
-  restart-grokbot    Quit/reopen Grok Bot on Rico (wake-desktop alias)
+  restart-grokbot    From Rico 2: restart pinned Grok Bot.app on Rico
+  restart-grokbot-peer  From Rico: restart pinned Grok Bot.app on Rico 2
   restart-lmstudio   Reopen Bionic.app only if :1234 process is dead
   watch-once         One monitor tick (LaunchAgent, every 10 min)
   watch              Foreground 10-minute loop
@@ -81,18 +82,30 @@ die() {
   exit "$rc"
 }
 
+current_host() {
+  if is_test; then
+    printf '%s' "${RICO_REPAIR_TEST_HOP:-Rico-2}"
+    return 0
+  fi
+  if [ ! -x /usr/sbin/scutil ]; then
+    die "scutil missing; this hop is for macOS" 78
+  fi
+  /usr/sbin/scutil --get LocalHostName
+}
+
 require_hop_host() {
   local hn
-  if is_test; then
-    hn="${RICO_REPAIR_TEST_HOP:-Rico-2}"
-  else
-    if [ ! -x /usr/sbin/scutil ]; then
-      die "scutil missing; this hop is for macOS Rico-2" 78
-    fi
-    hn="$(/usr/sbin/scutil --get LocalHostName)"
-  fi
+  hn="$(current_host)"
   if [ "$hn" != "$HOP_REQUIRED" ]; then
-    die "refuse: hop LocalHostName=${hn} (required: ${HOP_REQUIRED}). Do not run this CLI on Rico, AlanLTE, or any other host." 78
+    die "refuse: hop LocalHostName=${hn} (required: ${HOP_REQUIRED}). restart-grokbot runs on Rico-2. Use restart-grokbot-peer from original Rico." 78
+  fi
+}
+
+require_origin_host() {
+  local hn
+  hn="$(current_host)"
+  if [ "$hn" != "Rico" ]; then
+    die "refuse: LocalHostName=${hn} (required: Rico). restart-grokbot-peer runs from original Rico only." 78
   fi
 }
 
@@ -327,10 +340,46 @@ case "${verb}" in
     fi
     ;;
   grokbot-status)
-    if /usr/bin/pgrep -f '/Grok Bot.app/' >/dev/null 2>&1 || /usr/bin/pgrep -x 'Grok Bot' >/dev/null 2>&1; then
+    echo grokbot_app=/Applications/Grok Bot.app
+    if [ ! -d "/Applications/Grok Bot.app" ]; then
+      echo grokbot_installed=no
+      echo grokbot=missing
+      echo result=not-installed
+      exit 1
+    fi
+    if /usr/bin/pgrep -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || /usr/bin/pgrep -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1; then
       echo grokbot=running
     else
       echo grokbot=missing
+      exit 1
+    fi
+    ;;
+  restart-grokbot)
+    echo grokbot_app=/Applications/Grok Bot.app
+    echo action=restart-grokbot
+    if [ ! -d "/Applications/Grok Bot.app" ]; then
+      echo grokbot_installed=no
+      echo result=not-installed
+      exit 1
+    fi
+    if /usr/bin/pgrep -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || /usr/bin/pgrep -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1; then
+      /usr/bin/pkill -TERM -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+      /usr/bin/pkill -TERM -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
+      /bin/sleep 3
+      /usr/bin/pkill -KILL -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+      /usr/bin/pkill -KILL -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
+      echo grokbot_quit=ok
+    else
+      echo grokbot_quit=not-running
+    fi
+    /usr/bin/open -a "/Applications/Grok Bot.app"
+    /bin/sleep 3
+    if /usr/bin/pgrep -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || /usr/bin/pgrep -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1; then
+      echo grokbot=running
+      echo result=ok
+    else
+      echo grokbot=missing
+      echo result=open-failed
       exit 1
     fi
     ;;
@@ -584,6 +633,13 @@ cmd_self_check() {
   echo "alert copy: ${ALERT_LOG_COPY}"
   echo "state: ${STATE_FILE}"
   echo "interval: ${WATCH_INTERVAL}s (LaunchAgent StartInterval 600)"
+  echo "grokbot pin: /Applications/Grok Bot.app"
+  if [ -x "${HERE}/rico-repair-peer" ]; then
+    echo "ok peer script present"
+  else
+    echo "FAIL peer script missing"
+    failed=1
+  fi
   return "$failed"
 }
 
@@ -601,6 +657,13 @@ main() {
     restart-grokbot|wake-desktop)
       require_hop_host
       rico_remote restart-grokbot
+      ;;
+    restart-grokbot-peer|restart-grokbot-on-rico2)
+      require_origin_host
+      if [ ! -x "${HERE}/rico-repair-peer" ]; then
+        die "peer script missing: ${HERE}/rico-repair-peer" 1
+      fi
+      "${HERE}/rico-repair-peer" restart-grokbot-on-rico2
       ;;
     restart-lmstudio)
       require_hop_host
