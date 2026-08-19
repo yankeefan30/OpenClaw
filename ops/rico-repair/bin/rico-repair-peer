@@ -1,0 +1,355 @@
+#!/bin/bash
+# rico-repair-peer — Polar lands this on original Rico.
+#
+# SSHes Rico → Rico 2 using Polar's existing SSH (no password in this file)
+# and restarts the pinned /Applications/Grok Bot.app there.
+# Goon verified that path on Rico 2 (Grok Bot 0.20.0, com.anysphere.sand).
+# Do not treat Rico 2 as missing the app. Launch only the pinned path.
+# Hostname-gate: this host must be Rico; remote must be Rico-2.
+# Not an OpenClaw feature. No mail, iMessage, or public bind.
+
+set -euo pipefail
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+ROOT="$(CDPATH= cd -- "${HERE}/.." && pwd)"
+BUNDLED_KIT="${ROOT}/kit/rico-repair-peer-kit.sh"
+REMOTE_KIT="/Users/alan/Library/Scripts/rico-repair-peer-kit.sh"
+
+ORIGIN_REQUIRED="Rico"
+PEER_REQUIRED="Rico-2"
+TARGET_USER="alan"
+TARGETS=(192.168.4.246 Rico-2.local 100.73.16.116)
+CONNECT_TIMEOUT=8
+GROKBOT_APP="/Applications/Grok Bot.app"
+GROKBOT_BUNDLE="com.anysphere.sand"
+PEER_SSH_KEY="${RICO_REPAIR_PEER_SSH_KEY:-}"
+
+usage() {
+  cat <<'EOF'
+rico-repair-peer — Polar on original Rico (not OpenClaw, not iMessage)
+
+Commands:
+  restart-grokbot-on-rico2   SSH to Rico 2; pin /Applications/Grok Bot.app
+  grokbot-status             Probe Grok Bot on Rico 2 only
+  self-check                 Local safety checks, no SSH
+
+Aliases: restart-grokbot-peer, restart-grokbot
+
+SSH targets in order: 192.168.4.246, Rico-2.local, 100.73.16.116
+Uses Polar's existing Rico → Rico 2 SSH. Optional RICO_REPAIR_PEER_SSH_KEY.
+No password in this file. App path is pinned: /Applications/Grok Bot.app
+EOF
+  exit 2
+}
+
+is_test() {
+  [ "${RICO_REPAIR_TEST:-}" = "1" ]
+}
+
+die() {
+  echo "rico-repair-peer: $1" >&2
+  exit "${2:-1}"
+}
+
+current_host() {
+  if is_test; then
+    printf '%s' "${RICO_REPAIR_TEST_ORIGIN:-Rico}"
+    return 0
+  fi
+  if [ ! -x /usr/sbin/scutil ]; then
+    die "scutil missing; this peer script is for original Rico" 78
+  fi
+  /usr/sbin/scutil --get LocalHostName
+}
+
+require_origin_host() {
+  local hn
+  hn="$(current_host)"
+  if [ "$hn" != "$ORIGIN_REQUIRED" ]; then
+    die "refuse: LocalHostName=${hn} (required: ${ORIGIN_REQUIRED}). Polar runs this from original Rico only." 78
+  fi
+}
+
+allowlisted_verb() {
+  case "$1" in
+    grokbot-status|restart-grokbot)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+fill_ssh_opts() {
+  SSH_OPTS=(
+    -o BatchMode=yes
+    -o ConnectTimeout="${CONNECT_TIMEOUT}"
+    -o PreferredAuthentications=publickey
+    -o PasswordAuthentication=no
+    -o KbdInteractiveAuthentication=no
+    -o NumberOfPasswordPrompts=0
+    -o ExitOnForwardFailure=yes
+  )
+  if [ -n "$PEER_SSH_KEY" ]; then
+    SSH_OPTS+=(-i "$PEER_SSH_KEY" -o IdentitiesOnly=yes)
+  fi
+}
+
+ssh_to() {
+  local host="$1"
+  shift
+  fill_ssh_opts
+  /usr/bin/ssh "${SSH_OPTS[@]}" "${TARGET_USER}@${host}" "$@"
+}
+
+inline_remote() {
+  local verb="$1"
+  cat <<EOF
+set -euo pipefail
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+hn=\$(/usr/sbin/scutil --get LocalHostName)
+if [ "\$hn" != "Rico-2" ]; then
+  echo "rico-repair-peer: abort: LocalHostName=\$hn (required: Rico-2)" >&2
+  echo "host=\$hn"
+  echo "result=wrong-host"
+  exit 78
+fi
+echo "host=\$hn"
+echo "fallback=inline"
+echo "grokbot_app=${GROKBOT_APP}"
+echo "grokbot_bundle=${GROKBOT_BUNDLE}"
+if [ ! -d "${GROKBOT_APP}" ]; then
+  echo grokbot_installed=no
+  echo result=not-installed
+  exit 1
+fi
+echo grokbot_installed=yes
+running() {
+  /usr/bin/pgrep -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 \\
+    || /usr/bin/pgrep -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1
+}
+case "${verb}" in
+  grokbot-status)
+    if running; then echo grokbot=running; else echo grokbot=missing; exit 1; fi
+    ;;
+  restart-grokbot)
+    echo action=restart-grokbot
+    if running; then
+      /usr/bin/pkill -TERM -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+      /usr/bin/pkill -TERM -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
+      i=0
+      while [ "\$i" -lt 10 ]; do
+        running || break
+        /bin/sleep 1
+        i=\$((i + 1))
+      done
+      if running; then
+        /usr/bin/pkill -KILL -f '/Applications/Grok Bot.app/' >/dev/null 2>&1 || true
+        /usr/bin/pkill -KILL -f '/Library/Application Support/Grok Bot' >/dev/null 2>&1 || true
+        /bin/sleep 1
+      fi
+      if running; then
+        echo result=quit-failed
+        exit 1
+      fi
+      echo grokbot_quit=ok
+    else
+      echo grokbot_quit=not-running
+    fi
+    /usr/bin/open -a "${GROKBOT_APP}"
+    /bin/sleep 3
+    if running; then
+      echo grokbot=running
+      echo result=ok
+    else
+      echo grokbot=missing
+      echo result=open-failed
+      exit 1
+    fi
+    ;;
+  *)
+    echo result=no-inline-fallback
+    exit 127
+    ;;
+esac
+EOF
+}
+
+peer_ssh_named_kit() {
+  local verb="$1"
+  local host rc=1 out=""
+  for host in "${TARGETS[@]}"; do
+    echo "rico-repair-peer: ssh ${host} kit ${verb}" >&2
+    if out="$(ssh_to "$host" "$REMOTE_KIT" "$verb" 2>&1)"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    rc=$?
+    if printf '%s\n' "$out" | /usr/bin/grep -q 'result=wrong-host'; then
+      printf '%s\n' "$out"
+      return 78
+    fi
+    if printf '%s\n' "$out" | /usr/bin/grep -q 'No such file or directory\|not found\|kit-missing'; then
+      rc=127
+      continue
+    fi
+    if [ "$rc" -eq 127 ] || [ "$rc" -eq 255 ]; then
+      continue
+    fi
+    printf '%s\n' "$out"
+    return "$rc"
+  done
+  return "$rc"
+}
+
+peer_ssh_piped_kit() {
+  local verb="$1"
+  local host rc=1 out=""
+  if [ ! -f "$BUNDLED_KIT" ]; then
+    return 127
+  fi
+  for host in "${TARGETS[@]}"; do
+    echo "rico-repair-peer: ssh ${host} bundled-kit ${verb}" >&2
+    if out="$(ssh_to "$host" "bash -s -- ${verb}" < "$BUNDLED_KIT" 2>&1)"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    rc=$?
+    if printf '%s\n' "$out" | /usr/bin/grep -q 'result=wrong-host'; then
+      printf '%s\n' "$out"
+      return 78
+    fi
+    if [ "$rc" -eq 255 ]; then
+      continue
+    fi
+    printf '%s\n' "$out"
+    return "$rc"
+  done
+  return "$rc"
+}
+
+peer_ssh_inline() {
+  local verb="$1"
+  local host rc=1 out="" script
+  script="$(inline_remote "$verb")"
+  for host in "${TARGETS[@]}"; do
+    echo "rico-repair-peer: ssh ${host} inline ${verb}" >&2
+    if out="$(ssh_to "$host" "bash -s" <<< "$script" 2>&1)"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    rc=$?
+    if printf '%s\n' "$out" | /usr/bin/grep -q 'result=wrong-host'; then
+      printf '%s\n' "$out"
+      return 78
+    fi
+    if [ "$rc" -eq 255 ]; then
+      continue
+    fi
+    printf '%s\n' "$out"
+    return "$rc"
+  done
+  return "$rc"
+}
+
+peer_remote() {
+  local verb="$1"
+  local out rc=0
+  if ! allowlisted_verb "$verb"; then
+    die "refuse: verb not allowlisted" 2
+  fi
+  if is_test; then
+    printf 'host=Rico-2\nfallback=test\nverb=%s\ngrokbot_app=%s\ngrokbot_bundle=%s\n' "$verb" "$GROKBOT_APP" "$GROKBOT_BUNDLE"
+    return 0
+  fi
+  if out="$(peer_ssh_named_kit "$verb")"; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  rc=$?
+  if [ "$rc" -eq 78 ]; then
+    printf '%s\n' "$out"
+    return 78
+  fi
+  if [ "$rc" -ne 127 ] && [ "$rc" -ne 255 ]; then
+    printf '%s\n' "$out"
+    return "$rc"
+  fi
+  echo "rico-repair-peer: named kit missing; trying bundled kit" >&2
+  if out="$(peer_ssh_piped_kit "$verb")"; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  rc=$?
+  if [ "$rc" -eq 78 ]; then
+    printf '%s\n' "$out"
+    return 78
+  fi
+  if [ "$rc" -ne 127 ] && [ "$rc" -ne 255 ]; then
+    printf '%s\n' "$out"
+    return "$rc"
+  fi
+  echo "rico-repair-peer: bundled kit unavailable; using inline allowlisted fallback" >&2
+  peer_ssh_inline "$verb"
+}
+
+cmd_self_check() {
+  local failed=0
+  echo "rico-repair-peer self-check"
+  if [ ! -x "$0" ]; then
+    echo "FAIL peer not executable"
+    failed=1
+  else
+    echo "ok peer executable"
+  fi
+  if [ -f "$BUNDLED_KIT" ]; then
+    echo "ok bundled peer kit present"
+  else
+    echo "FAIL bundled peer kit missing"
+    failed=1
+  fi
+  if bash -n "$0" && bash -n "$BUNDLED_KIT"; then
+    echo "ok bash -n"
+  else
+    echo "FAIL bash -n"
+    failed=1
+  fi
+  echo "origin required: ${ORIGIN_REQUIRED}"
+  echo "peer required: ${PEER_REQUIRED}"
+  echo "targets: ${TARGETS[*]}"
+  echo "grokbot pin: ${GROKBOT_APP} (${GROKBOT_BUNDLE}, verified on Rico and Rico 2)"
+  echo "optional key: ${PEER_SSH_KEY:-<Polar existing SSH>}"
+  return "$failed"
+}
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    restart-grokbot-on-rico2|restart-grokbot-peer|restart-grokbot)
+      require_origin_host
+      peer_remote restart-grokbot
+      ;;
+    grokbot-status)
+      require_origin_host
+      peer_remote grokbot-status
+      ;;
+    self-check)
+      cmd_self_check
+      ;;
+    ""|-h|--help|help)
+      usage
+      ;;
+    *)
+      echo "unknown command: ${cmd}" >&2
+      usage
+      ;;
+  esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
