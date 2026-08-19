@@ -633,7 +633,7 @@ cmd_self_check() {
   echo "alert copy: ${ALERT_LOG_COPY}"
   echo "state: ${STATE_FILE}"
   echo "interval: ${WATCH_INTERVAL}s (LaunchAgent StartInterval 600)"
-  echo "grokbot pin: /Applications/Grok Bot.app"
+  echo "grokbot pin: /Applications/Grok Bot.app (com.anysphere.sand, verified on Rico and Rico 2)"
   if [ -x "${HERE}/rico-repair-peer" ]; then
     echo "ok peer script present"
   else

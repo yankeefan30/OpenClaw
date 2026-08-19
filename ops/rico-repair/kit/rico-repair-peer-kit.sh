@@ -2,9 +2,10 @@
 # Rico 2 peer kit. Goon may drop this at:
 #   /Users/alan/Library/Scripts/rico-repair-peer-kit.sh
 #
-# Polar's Rico→Rico 2 peer script calls this by name. It only restarts the
-# pinned Grok Bot.app on Rico 2. Hostname-gate: LocalHostName == Rico-2.
-# Never run this kit on original Rico or AlanLTE.
+# Polar's Rico→Rico 2 peer script calls this by name. It restarts the
+# pinned /Applications/Grok Bot.app on Rico 2 (Goon-verified: Grok Bot
+# 0.20.0, bundle com.anysphere.sand). Do not treat that path as missing.
+# Launch only the pinned path. Hostname-gate: LocalHostName == Rico-2.
 
 set -euo pipefail
 
@@ -14,6 +15,7 @@ export PATH
 KIT_NAME="rico-repair-peer-kit"
 REQUIRED_HOST="Rico-2"
 GROKBOT_APP="/Applications/Grok Bot.app"
+GROKBOT_BUNDLE="com.anysphere.sand"
 
 usage() {
   echo "usage: ${KIT_NAME} <grokbot-status|restart-grokbot>" >&2
@@ -63,6 +65,7 @@ cmd_grokbot_status() {
   fi
   emit "grokbot=${running}"
   emit "grokbot_app=${GROKBOT_APP}"
+  emit "grokbot_bundle=${GROKBOT_BUNDLE}"
   emit "grokbot_installed=${installed}"
   if [ "$installed" != "yes" ]; then
     emit "result=not-installed"
@@ -96,6 +99,7 @@ quit_grokbot() {
 cmd_restart_grokbot() {
   emit "action=restart-grokbot"
   emit "grokbot_app=${GROKBOT_APP}"
+  emit "grokbot_bundle=${GROKBOT_BUNDLE}"
   if ! grokbot_installed; then
     log "Grok Bot.app not installed at pinned path; not inventing another app"
     emit "grokbot_installed=no"

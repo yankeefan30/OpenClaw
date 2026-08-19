@@ -23,6 +23,7 @@ HEALTHZ_URL="http://127.0.0.1:18789/healthz"
 LMSTUDIO_URL="http://127.0.0.1:1234/v1/models"
 COMMS_STATE="/Users/alan/Documents/Codex/rico-comms-monitor/state.json"
 GROKBOT_APP="/Applications/Grok Bot.app"
+GROKBOT_BUNDLE="com.anysphere.sand"
 LMSTUDIO_PIN="${HOME}/.config/rico-repair/lmstudio-app"
 CAFFEINATE_SECONDS=180
 
@@ -264,6 +265,7 @@ cmd_grokbot_status() {
   fi
   emit "grokbot=${running}"
   emit "grokbot_app=${GROKBOT_APP}"
+  emit "grokbot_bundle=${GROKBOT_BUNDLE}"
   emit "grokbot_installed=${installed}"
   if [ "$installed" != "yes" ]; then
     emit "result=not-installed"
@@ -297,6 +299,7 @@ quit_grokbot() {
 cmd_restart_grokbot() {
   emit "action=restart-grokbot"
   emit "grokbot_app=${GROKBOT_APP}"
+  emit "grokbot_bundle=${GROKBOT_BUNDLE}"
   if ! grokbot_installed; then
     log "Grok Bot.app not installed at pinned path; not inventing another app"
     emit "grokbot_installed=no"

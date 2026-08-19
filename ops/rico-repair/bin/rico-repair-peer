@@ -2,7 +2,9 @@
 # rico-repair-peer — Polar lands this on original Rico.
 #
 # SSHes Rico → Rico 2 using Polar's existing SSH (no password in this file)
-# and restarts the pinned /Applications/Grok Bot.app there if present.
+# and restarts the pinned /Applications/Grok Bot.app there.
+# Goon verified that path on Rico 2 (Grok Bot 0.20.0, com.anysphere.sand).
+# Do not treat Rico 2 as missing the app. Launch only the pinned path.
 # Hostname-gate: this host must be Rico; remote must be Rico-2.
 # Not an OpenClaw feature. No mail, iMessage, or public bind.
 
@@ -22,6 +24,7 @@ TARGET_USER="alan"
 TARGETS=(192.168.4.246 Rico-2.local 100.73.16.116)
 CONNECT_TIMEOUT=8
 GROKBOT_APP="/Applications/Grok Bot.app"
+GROKBOT_BUNDLE="com.anysphere.sand"
 PEER_SSH_KEY="${RICO_REPAIR_PEER_SSH_KEY:-}"
 
 usage() {
@@ -29,7 +32,7 @@ usage() {
 rico-repair-peer — Polar on original Rico (not OpenClaw, not iMessage)
 
 Commands:
-  restart-grokbot-on-rico2   SSH to Rico 2 and restart pinned Grok Bot.app
+  restart-grokbot-on-rico2   SSH to Rico 2; pin /Applications/Grok Bot.app
   grokbot-status             Probe Grok Bot on Rico 2 only
   self-check                 Local safety checks, no SSH
 
@@ -118,6 +121,7 @@ fi
 echo "host=\$hn"
 echo "fallback=inline"
 echo "grokbot_app=${GROKBOT_APP}"
+echo "grokbot_bundle=${GROKBOT_BUNDLE}"
 if [ ! -d "${GROKBOT_APP}" ]; then
   echo grokbot_installed=no
   echo result=not-installed
@@ -259,7 +263,7 @@ peer_remote() {
     die "refuse: verb not allowlisted" 2
   fi
   if is_test; then
-    printf 'host=Rico-2\nfallback=test\nverb=%s\ngrokbot_app=%s\n' "$verb" "$GROKBOT_APP"
+    printf 'host=Rico-2\nfallback=test\nverb=%s\ngrokbot_app=%s\ngrokbot_bundle=%s\n' "$verb" "$GROKBOT_APP" "$GROKBOT_BUNDLE"
     return 0
   fi
   if out="$(peer_ssh_named_kit "$verb")"; then
@@ -317,7 +321,7 @@ cmd_self_check() {
   echo "origin required: ${ORIGIN_REQUIRED}"
   echo "peer required: ${PEER_REQUIRED}"
   echo "targets: ${TARGETS[*]}"
-  echo "grokbot pin: ${GROKBOT_APP}"
+  echo "grokbot pin: ${GROKBOT_APP} (${GROKBOT_BUNDLE}, verified on Rico and Rico 2)"
   echo "optional key: ${PEER_SSH_KEY:-<Polar existing SSH>}"
   return "$failed"
 }

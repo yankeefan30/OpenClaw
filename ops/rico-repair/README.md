@@ -109,9 +109,10 @@ Polar does this on **original Rico only**. Polar does not log into Rico 2 and do
    /Users/alan/Library/Scripts/rico-repair-peer restart-grokbot-on-rico2
    ```
 
-   This host must be `Rico`. Remote must be `Rico-2`. If
-   `/Applications/Grok Bot.app` is missing on Rico 2, it reports
-   `not-installed` and stops.
+   This host must be `Rico`. Remote must be `Rico-2`. Goon verified
+   `/Applications/Grok Bot.app` is installed on Rico 2 (same Grok Bot
+   0.20.0 / `com.anysphere.sand`). The peer pins that path and does not
+   treat Rico 2 as missing the app. It will not open `Cursor.app`.
 
 4. Seed `known_hosts` on Rico 2 **before** loading launchd (BatchMode will
    otherwise fail on an unknown host key):
@@ -236,19 +237,22 @@ ops/rico-repair/tests/check.sh
 
 ## Bidirectional Grok Bot restart
 
-Verified on original Rico (do not invent another path):
+Pinned on **both** Minis (Goon verified Rico 2 just now; do not invent
+another path and do not use `Cursor.app`):
 
 ```
 /Applications/Grok Bot.app
 ```
 
-Display name **Grok Bot**, Electron, user-data-dir
-`/Users/alan/Library/Application Support/Grok Bot`, version seen 0.20.0.
-Both directions pin that path. Restart is: quit the `Grok Bot.app` process
-tree (`pkill` TERM, wait, KILL if needed), then
-`open -a "/Applications/Grok Bot.app"`. No AppleScript UI. No `Cursor.app`.
-If the pinned app is missing on that Mini, the script reports
-`result=not-installed` and does not invent another app.
+Same identity on original Rico and Rico 2: display name **Grok Bot**,
+version **0.20.0**, bundle **`com.anysphere.sand`**, Electron user-data-dir
+`/Users/alan/Library/Application Support/Grok Bot`.
+
+Both directions pin that path and expect the app to be there. Restart is:
+quit the `Grok Bot.app` process tree (`pkill` TERM, wait, KILL if needed),
+then `open -a "/Applications/Grok Bot.app"`. No AppleScript UI. A fail-closed
+`not-installed` abort exists only if that exact path is absent on the
+wrong machine; Rico 2 is not treated as missing Grok Bot.
 
 | Direction | Who runs it | Host gate | Remote gate | Command |
 | --- | --- | --- | --- | --- |

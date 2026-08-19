@@ -220,6 +220,8 @@ fi
 
 if grep -q 'GROKBOT_APP="/Applications/Grok Bot.app"' "$KIT" \
   && grep -q 'GROKBOT_APP="/Applications/Grok Bot.app"' "$PEER_KIT" \
+  && grep -q 'GROKBOT_BUNDLE="com.anysphere.sand"' "$KIT" \
+  && grep -q 'GROKBOT_BUNDLE="com.anysphere.sand"' "$PEER_KIT" \
   && grep -q 'open -a' "$KIT" && grep -q 'open -a' "$PEER_KIT" \
   && ! grep -q 'osascript' "$KIT" "$PEER_KIT" "$HOP" "$PEER" \
   && ! grep -q 'Cursor.app' "$KIT" "$PEER_KIT" "$HOP" "$PEER"; then
@@ -331,7 +333,8 @@ RICO_REPAIR_TEST=1 RICO_REPAIR_TEST_ORIGIN=Rico "$PEER" restart-grokbot-on-rico2
 peer_rc=$?
 set -e
 if [ "$peer_rc" -eq 0 ] && grep -q 'host=Rico-2' /tmp/rico-repair-peer-run.out \
-  && grep -q '/Applications/Grok Bot.app' /tmp/rico-repair-peer-run.out; then
+  && grep -q '/Applications/Grok Bot.app' /tmp/rico-repair-peer-run.out \
+  && grep -q 'com.anysphere.sand' /tmp/rico-repair-peer-run.out; then
   pass "peer test restart names Rico-2 and pinned app"
 else
   fail "peer test restart names Rico-2 and pinned app"
