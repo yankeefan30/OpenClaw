@@ -1,0 +1,19 @@
+{
+  "name": "rico-pressmaster-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "rico-pressmaster-mcp": "./index.mjs"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "stdio": "node index.mjs --stdio",
+    "login": "node index.mjs --login",
+    "test": "node --test tests/*.test.mjs",
+    "selftest": "node index.mjs --selftest"
+  }
+}
