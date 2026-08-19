@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.polar.rico-repair</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/alan/ops/rico-repair/bin/rico-repair</string>
+    <string>watch-once</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/alan/ops/rico-repair</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Nice</key>
+  <integer>5</integer>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/alan/Library/Logs/rico-repair.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/alan/Library/Logs/rico-repair.launchd.err.log</string>
+</dict>
+</plist>
