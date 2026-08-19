@@ -4,10 +4,10 @@ Isolated ops kit for **Rico 2**. Goon copies this directory onto Rico 2.
 
 This is **not** an OpenClaw feature, plugin, second gateway, speaker, or
 iMessage path. It does not change chat, VIP, escalate, or Qwen routing.
-Polar's cloud box is off the LAN. Rico 2 is on it. The hop SSHes to original
-Rico, checks a short allowlist, and can restart Grok Bot / kickstart the
-already-installed OpenClaw gateway / conservatively reopen Bionic if the local
-model process is dead.
+Polar's cloud box is off the LAN. Polar stays off Rico 2. Rico 2 is on the
+LAN. Goon loads a local launchd job that checks original Rico every **10
+minutes**. Healthy ticks only log `ok`. A bad tick writes a local ALERT for
+Goon, then runs this same `rico-repair` script for the matching action.
 
 Do not install OpenClaw, Messages, Lindy, or Hermes on Rico 2 for this.
 
