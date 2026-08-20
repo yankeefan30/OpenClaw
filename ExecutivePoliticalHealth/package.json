@@ -1,0 +1,27 @@
+{
+  "name": "@openclaw/executive-political-health",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Idempotent Notion importer for the Executive Political Health Dashboard",
+  "engines": {
+    "node": ">=22.14"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts",
+    "import": "node --experimental-strip-types src/cli.ts",
+    "import:dry-run": "node --experimental-strip-types src/cli.ts --dry-run",
+    "validate": "node --experimental-strip-types src/cli.ts --validate-only"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
