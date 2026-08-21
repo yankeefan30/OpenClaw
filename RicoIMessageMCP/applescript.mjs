@@ -15,12 +15,20 @@ export function classifyAutomationError(stderr, fallback = "automation_failed") 
   }
   if (/7301\b/u.test(value) || /RICO_MAIL_NOT_FOUND/u.test(value)) return "mail_not_found";
   if (/7302\b/u.test(value) || /RICO_CALENDAR_NOT_FOUND/u.test(value)) return "calendar_not_found";
+  if (/7303\b/u.test(value) || /RICO_MAILBOX_NOT_FOUND/u.test(value) || /RICO_MAIL_ACCOUNT_NOT_FOUND/u.test(value)) {
+    return "mail_account_not_found";
+  }
   return fallback;
 }
 
-export function runOsascript(script, { timeoutMs = 12_000 } = {}) {
+export function jsString(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+
+export function runOsascript(script, { timeoutMs = 12_000, language } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/osascript", ["-"], { stdio: ["pipe", "pipe", "pipe"] });
+    const args = language === "javascript" ? ["-l", "JavaScript", "-"] : ["-"];
+    const child = spawn("/usr/bin/osascript", args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let settled = false;

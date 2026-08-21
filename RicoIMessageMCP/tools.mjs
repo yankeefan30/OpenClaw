@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { authorizeRecipient, imessageChannelFromConfig, loadPolicy, parseSendTarget } from "./allowlist.mjs";
 import { MAX_IDEMPOTENCY_CHARS, MAX_TEXT_CHARS, SERVER_NAME, SERVER_VERSION } from "./constants.mjs";
 import { fail } from "./errors.mjs";
-import { LOCAL_TOOL_DEFINITIONS, callLocalTool, isLocalTool } from "./local-tools.mjs";
+import { LOCAL_TOOL_DEFINITIONS, NOTION_TOOL_DEFINITIONS, callLocalTool, isLocalTool } from "./local-tools.mjs";
 
 export const TOOL_DEFINITIONS = Object.freeze([
   {
@@ -42,7 +42,12 @@ export const TOOL_DEFINITIONS = Object.freeze([
   ...LOCAL_TOOL_DEFINITIONS,
 ]);
 
-export async function callTool(runtime, name, args) {
+export { NOTION_TOOL_DEFINITIONS };
+
+export async function callTool(runtime, name, args, { profile = "full" } = {}) {
+  if (profile === "notion-cvs") {
+    return callLocalTool(runtime, name, args, { profile });
+  }
   switch (name) {
     case "rico_imessage_send":
       return sendIMessage(runtime, args);
@@ -51,7 +56,7 @@ export async function callTool(runtime, name, args) {
     case "rico_imessage_can_send":
       return canSend(runtime, args);
     default:
-      if (isLocalTool(name)) return callLocalTool(runtime, name, args);
+      if (isLocalTool(name)) return callLocalTool(runtime, name, args, { profile });
       throw fail("tool_not_found", "Unknown Rico iMessage tool.");
   }
 }

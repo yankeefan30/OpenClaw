@@ -13,8 +13,8 @@ test("Mail list and get stay bounded and use the injected runner", async () => {
     outlookAppPath: "/tmp/rico-outlook-missing",
     runner: async (script) => {
       scripts.push(script);
-      if (script.includes("count of messages of inbox") && script.includes("repeat with i")) {
-        return `RICO_OK\n40\n2\n${record(["11", "Hello", "janet@example.com", "2026-08-16T12:00:00"])}\u001e${record(["10", "Earlier", "owner@example.com", "2026-08-16T11:00:00"])}`;
+      if (script.includes("set theBox to inbox") && script.includes("repeat with i")) {
+        return `RICO_OK\n2\n2\n${record(["11", "Hello", "janet@example.com", "2026-08-16T12:00:00"])}\u001e${record(["10", "Earlier", "owner@example.com", "2026-08-16T11:00:00"])}`;
       }
       if (script.includes("whose id is 11")) {
         return `RICO_OK\n1\n1\n${record(["11", "Hello", "janet@example.com", "2026-08-16T12:00:00", "Bounded body"])}`;
@@ -25,7 +25,7 @@ test("Mail list and get stay bounded and use the injected runner", async () => {
 
   const listed = await callTool({ localApps: apps }, "rico_mail_list_inbox", { limit: 2 });
   assert.equal(listed.ok, true);
-  assert.equal(listed.total, 40);
+  assert.equal(listed.total, 2);
   assert.equal(listed.truncated, true);
   assert.equal(listed.messages.length, 2);
   assert.equal(listed.messages[0].id, "11");
@@ -145,3 +145,60 @@ test("automation denial is a clear error and does not look like a crash", async 
     { code: "automation_denied" },
   );
 });
+
+test("Mail account inventory strips extra emails from the public tool result", async () => {
+  const apps = createLocalApps({
+    outlookAppPath: "/tmp/rico-outlook-missing",
+    runner: async (script) => {
+      if (script.includes("email addresses of acc")) {
+        return `RICO_OK\n2\n2\n${record(["iCloud", "iCloud", "alan.a.rosa@icloud.com"])}\u001e${record(["CVS Health", "exchange", "alan.rosa@cvshealth.com,al.rosa@cvshealth.com"])}`;
+      }
+      throw new Error(`unexpected script: ${script.slice(0, 80)}`);
+    },
+  });
+  const listed = await callTool({ localApps: apps }, "rico_mail_list_accounts", {});
+  assert.equal(listed.accounts.length, 2);
+  assert.equal(listed.accounts[1].name, "CVS Health");
+  assert.equal(listed.accounts[1].cvsHealth, true);
+  assert.equal(listed.accounts[0].cvsHealth, false);
+  assert.ok(!JSON.stringify(listed).includes("alan.rosa@cvshealth.com"));
+  assert.ok(!JSON.stringify(listed).includes("icloud.com"));
+});
+
+test("Mail list can target one Mail.app account inbox", async () => {
+  const apps = createLocalApps({
+    outlookAppPath: "/tmp/rico-outlook-missing",
+    runner: async (script) => {
+      assert.ok(script.includes('"CVS Health"'));
+      assert.ok(script.includes("requireAccount"));
+      assert.ok(script.includes("accountInbox"));
+      return `RICO_OK\n1\n1\n${record(["99", "Work note", "boss@cvshealth.com", "2026-08-21T12:00:00"])}`;
+    },
+  });
+  const listed = await callTool({ localApps: apps }, "rico_mail_list_inbox", { account: "CVS Health", limit: 5 });
+  assert.equal(listed.account, "CVS Health");
+  assert.equal(listed.mailbox, "INBOX");
+  assert.equal(listed.messages[0].id, "99");
+});
+
+test("Calendar inventory falls back to AppleScript when EventKit is denied", async () => {
+  const apps = createLocalApps({
+    outlookAppPath: "/tmp/rico-outlook-missing",
+    runner: async (script) => {
+      if (script.includes("EKEventStore")) {
+        const error = new Error("denied");
+        error.code = "automation_denied";
+        throw error;
+      }
+      if (script.includes("repeat with cal in calendars") && script.includes("writableFlag")) {
+        return `RICO_OK\n2\n2\n${record(["Calendar", "", "true"])}\u001e${record(["Home", "", "true"])}`;
+      }
+      throw new Error("unexpected calendar inventory script");
+    },
+  });
+  const listed = await callTool({ localApps: apps }, "rico_calendar_list_calendars", {});
+  assert.equal(listed.calendars.length, 2);
+  assert.equal(listed.calendars[0].name, "Calendar");
+  assert.equal(listed.calendars[0].writable, true);
+});
+

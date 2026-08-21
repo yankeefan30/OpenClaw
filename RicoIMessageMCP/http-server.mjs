@@ -49,6 +49,10 @@ export function createHttpServer({
         return;
       }
       if (!tokensMatch(token, extractBearer(request.headers.authorization))) {
+        if (request.method === "OPTIONS" && isMcpPath(new URL(request.url ?? "/", `http://${host}`).pathname)) {
+          sendCorsPreflight(response);
+          return;
+        }
         response.setHeader("WWW-Authenticate", "Bearer");
         sendJson(response, 401, { error: "unauthorized" });
         return;
@@ -57,6 +61,11 @@ export function createHttpServer({
       const url = new URL(request.url ?? "/", `http://${host}`);
       if (!isMcpPath(url.pathname)) {
         sendJson(response, 404, { error: "not_found" });
+        return;
+      }
+
+      if (request.method === "OPTIONS") {
+        sendCorsPreflight(response);
         return;
       }
 
@@ -159,8 +168,26 @@ function sendJson(response, status, body) {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(payload),
     "Cache-Control": "no-store",
+    ...corsHeaders(),
   });
   response.end(payload);
+}
+
+function sendCorsPreflight(response) {
+  response.writeHead(204, {
+    ...corsHeaders(),
+    "Access-Control-Max-Age": "600",
+  });
+  response.end();
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id, Mcp-Protocol-Version",
+  };
 }
 
 function readBody(request) {

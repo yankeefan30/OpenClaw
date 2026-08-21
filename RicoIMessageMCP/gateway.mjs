@@ -5,7 +5,7 @@ const CONNECT_SCOPES = Object.freeze(["operator.read", "operator.write"]);
 const CONNECT_CLIENT = Object.freeze({
   id: "gateway-client",
   displayName: "rico-imessage-mcp",
-  version: "0.3.0",
+  version: "0.4.0",
   platform: "macos",
   mode: "backend",
 });

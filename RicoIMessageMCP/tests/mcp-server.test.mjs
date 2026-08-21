@@ -40,9 +40,11 @@ test("MCP server initializes and lists Rico iMessage plus local-app tools", asyn
     "rico_imessage_health",
     "rico_imessage_can_send",
     "rico_local_apps_health",
+    "rico_mail_list_accounts",
     "rico_mail_list_inbox",
     "rico_mail_get",
     "rico_mail_send",
+    "rico_calendar_list_calendars",
     "rico_calendar_list",
     "rico_calendar_upsert",
     "rico_outlook_list_inbox",
@@ -64,7 +66,7 @@ test("health reports gateway + probe.ok and never echoes secrets", async () => {
     gatewayOnline: true,
     imessageProbeOk: true,
     bridge: "rico-imessage-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
   });
   assert.ok(!JSON.stringify(result).includes(secret));
   assert.ok(!JSON.stringify(result).includes("should-not-leak"));
@@ -82,7 +84,7 @@ test("health stays fail-closed when the probe is not ok", async () => {
     gatewayOnline: true,
     imessageProbeOk: false,
     bridge: "rico-imessage-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
   });
 });
 
@@ -107,3 +109,53 @@ test("tool errors stay closed without stack traces or secret strings", async () 
   assert.ok(!serialized.includes("gateway-token-should-not-leak"));
   assert.ok(!serialized.includes("secret-stack"));
 });
+
+test("initialize accepts extra Notion client fields and older protocol versions", async () => {
+  const mcp = server({ policy: policy(), gateway: { sendIMessage: async () => ({ messageId: "x" }) } });
+  const init = await mcp.handle({
+    jsonrpc: "2.0",
+    id: 9,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: { roots: { listChanged: true } },
+      clientInfo: { name: "notion-custom-agent", version: "1.0.0", extras: { workspace: "ignored" } },
+      _meta: { "notion/agent": "custom" },
+    },
+  });
+  assert.equal(init.result.protocolVersion, "2024-11-05");
+  assert.equal(init.result.serverInfo.name, "rico-imessage-mcp");
+});
+
+test("Notion profile lists only CVS Health Mail and iCal tools", async () => {
+  const mcp = new RicoIMessageMcpServer({
+    runtime: { policy: policy(), gateway: { sendIMessage: async () => ({ messageId: "nope" }) } },
+    profile: "notion-cvs",
+  });
+  const init = await mcp.handle({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-03-26", clientInfo: { name: "notion" } },
+  });
+  assert.equal(init.result.serverInfo.name, "rico-notion-mcp");
+  const list = await mcp.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+  assert.deepEqual(list.result.tools.map((tool) => tool.name), [
+    "rico_local_apps_health",
+    "rico_mail_list_accounts",
+    "rico_mail_list_inbox",
+    "rico_mail_get",
+    "rico_calendar_list_calendars",
+    "rico_calendar_list",
+    "rico_calendar_upsert",
+  ]);
+  const denied = await mcp.handle({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "rico_imessage_send", arguments: { to: "+16469433060", text: "nope" } },
+  });
+  assert.equal(denied.result.isError, true);
+  assert.equal(denied.result.structuredContent.error, "tool_not_found");
+});
+
