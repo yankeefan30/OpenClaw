@@ -1,17 +1,27 @@
 import { loadPolicy } from "./allowlist.mjs";
 import {
   DEFAULT_CALENDAR_DAYS,
+  DEFAULT_MAILBOX_NAME,
   MAX_CALENDAR_DAYS,
   MAX_CALENDAR_NOTES_CHARS,
   MAX_CALENDAR_TITLE_CHARS,
   MAX_IDEMPOTENCY_CHARS,
   MAX_INBOX_ITEMS,
   MAX_MAIL_BODY_CHARS,
+  MAX_MAILBOX_NAME_CHARS,
   MAX_SUBJECT_CHARS,
   SERVER_NAME,
   SERVER_VERSION,
   defaultEmailAuthorizationPath,
 } from "./constants.mjs";
+import {
+  isCvsHealthCalendar,
+  isCvsHealthMailAccount,
+  pickCvsHealthCalendar,
+  pickCvsHealthMailAccount,
+  publicCalendar,
+  publicMailAccount,
+} from "./cvs-health.mjs";
 import { authorizeEmailRecipient, loadEmailAuthorizations } from "./email-allowlist.mjs";
 import { fail } from "./errors.mjs";
 import { createLocalApps } from "./local-apps.mjs";
@@ -24,13 +34,21 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "rico_mail_list_accounts",
+    description: "List Apple Mail account names on this Mac. Does not return mailbox contents, tokens, or extra email addresses.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "rico_mail_list_inbox",
-    description: "List a bounded number of recent Apple Mail inbox messages (metadata only). Not a full mailbox scrape.",
+    description: "List a bounded number of recent Apple Mail inbox messages (metadata only). Optional account selects one Mail.app account instead of the unified inbox. Not a full mailbox scrape.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         limit: { type: "integer", minimum: 1, maximum: MAX_INBOX_ITEMS, description: "Max messages to return." },
+        account: { type: "string", minLength: 1, maxLength: 80, description: "Exact Mail.app account name." },
+        mailbox: { type: "string", minLength: 1, maxLength: MAX_MAILBOX_NAME_CHARS, description: "Mailbox name. Defaults to INBOX." },
       },
       required: [],
     },
@@ -38,13 +56,15 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: "rico_mail_get",
-    description: "Get one Apple Mail inbox message by id from a previous list. Body is truncated.",
+    description: "Get one Apple Mail inbox message by id from a previous list. Body is truncated. Optional account scopes the lookup to that Mail.app account.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["id"],
       properties: {
         id: { type: "string", minLength: 1, maxLength: 32, description: "Mail message id from rico_mail_list_inbox." },
+        account: { type: "string", minLength: 1, maxLength: 80, description: "Exact Mail.app account name." },
+        mailbox: { type: "string", minLength: 1, maxLength: MAX_MAILBOX_NAME_CHARS, description: "Mailbox name. Defaults to INBOX." },
       },
     },
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -66,14 +86,21 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
     annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
   {
+    name: "rico_calendar_list_calendars",
+    description: "List Calendar.app (iCal) calendar names on this Mac, including the account/source when EventKit can provide it.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "rico_calendar_list",
-    description: "List upcoming Calendar.app events in a bounded window. Optional calendar name limits the search.",
+    description: "List upcoming Calendar.app events in a bounded window. Optional calendar and account names limit the search to one iCal calendar.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         days: { type: "integer", minimum: 1, maximum: MAX_CALENDAR_DAYS, description: "Forward window in days." },
         calendar: { type: "string", minLength: 1, maxLength: 80, description: "Exact local calendar name." },
+        account: { type: "string", minLength: 1, maxLength: 80, description: "Exact Calendar account/source name." },
       },
       required: [],
     },
@@ -89,6 +116,7 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
       properties: {
         id: { type: "string", minLength: 1, maxLength: 256, description: "Existing event uid to update." },
         calendar: { type: "string", minLength: 1, maxLength: 80, description: "Exact local calendar name." },
+        account: { type: "string", minLength: 1, maxLength: 80, description: "Exact Calendar account/source name." },
         title: { type: "string", minLength: 1, maxLength: MAX_CALENDAR_TITLE_CHARS },
         start: { type: "string", minLength: 10, maxLength: 40, description: "ISO-8601 start." },
         end: { type: "string", minLength: 10, maxLength: 40, description: "ISO-8601 end." },
@@ -145,46 +173,81 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
 
 const LOCAL_TOOL_NAMES = new Set(LOCAL_TOOL_DEFINITIONS.map((tool) => tool.name));
 
+export const NOTION_TOOL_NAMES = Object.freeze([
+  "rico_local_apps_health",
+  "rico_mail_list_accounts",
+  "rico_mail_list_inbox",
+  "rico_mail_get",
+  "rico_calendar_list_calendars",
+  "rico_calendar_list",
+  "rico_calendar_upsert",
+]);
+
+export const NOTION_TOOL_DEFINITIONS = Object.freeze(
+  LOCAL_TOOL_DEFINITIONS.filter((tool) => NOTION_TOOL_NAMES.includes(tool.name)),
+);
+
 export function isLocalTool(name) {
   return LOCAL_TOOL_NAMES.has(name);
 }
 
-export async function callLocalTool(runtime, name, args) {
+export function isNotionTool(name) {
+  return NOTION_TOOL_NAMES.includes(name);
+}
+
+export async function callLocalTool(runtime, name, args, { profile = "full" } = {}) {
+  if (profile === "notion-cvs" && !isNotionTool(name)) {
+    throw fail("tool_not_found", "Unknown Rico Notion tool.");
+  }
   const apps = localApps(runtime);
+  const scoped = profile === "notion-cvs" ? await withCvsHealthScope(apps, name, args) : args;
   switch (name) {
     case "rico_local_apps_health":
-      return localAppsHealth(apps);
+      return localAppsHealth(apps, { profile, scoped });
+    case "rico_mail_list_accounts":
+      return mailListAccounts(apps, { profile });
     case "rico_mail_list_inbox":
-      return apps.mailListInbox({ limit: args?.limit });
+      return apps.mailListInbox({
+        limit: scoped?.limit,
+        account: optionalName(scoped?.account, "mail_account_invalid"),
+        mailbox: optionalName(scoped?.mailbox, "mail_mailbox_invalid") ?? (scoped?.account ? DEFAULT_MAILBOX_NAME : undefined),
+      });
     case "rico_mail_get":
-      return apps.mailGet({ id: sanitizeMessageId(args?.id) });
+      return apps.mailGet({
+        id: sanitizeMessageId(scoped?.id),
+        account: optionalName(scoped?.account, "mail_account_invalid"),
+        mailbox: optionalName(scoped?.mailbox, "mail_mailbox_invalid"),
+      });
     case "rico_mail_send":
-      return mailSend(runtime, apps, args);
+      return mailSend(runtime, apps, scoped);
+    case "rico_calendar_list_calendars":
+      return calendarListCalendars(apps, { profile });
     case "rico_calendar_list":
       return apps.calendarList({
-        days: args?.days ?? DEFAULT_CALENDAR_DAYS,
-        calendar: optionalName(args?.calendar, "calendar_name_invalid"),
+        days: scoped?.days ?? DEFAULT_CALENDAR_DAYS,
+        calendar: optionalName(scoped?.calendar, "calendar_name_invalid"),
+        account: optionalName(scoped?.account, "calendar_account_invalid"),
       });
     case "rico_calendar_upsert":
-      return calendarUpsert(apps, args);
+      return calendarUpsert(apps, scoped);
     case "rico_outlook_list_inbox":
-      return apps.outlookListInbox({ limit: args?.limit });
+      return apps.outlookListInbox({ limit: scoped?.limit });
     case "rico_outlook_get":
-      return apps.outlookGet({ id: sanitizeMessageId(args?.id) });
+      return apps.outlookGet({ id: sanitizeMessageId(scoped?.id) });
     case "rico_outlook_send":
-      return outlookSend(runtime, apps, args);
+      return outlookSend(runtime, apps, scoped);
     default:
       throw fail("tool_not_found", "Unknown Rico local-app tool.");
   }
 }
 
-async function localAppsHealth(apps) {
+async function localAppsHealth(apps, { profile = "full", scoped } = {}) {
   const [mail, calendar, outlook] = await Promise.all([
     apps.mailHealth(),
     apps.calendarHealth(),
     apps.outlookHealth(),
   ]);
-  return {
+  const result = {
     ok: mail.reachable === true && calendar.reachable === true,
     bridge: SERVER_NAME,
     version: SERVER_VERSION,
@@ -192,6 +255,85 @@ async function localAppsHealth(apps) {
     calendar: publicAppHealth(calendar),
     outlook: publicAppHealth(outlook),
   };
+  if (profile === "notion-cvs") {
+    result.profile = "notion-cvs";
+    result.mail = {
+      ...result.mail,
+      cvsHealth: Boolean(scoped?.mailAccount),
+      account: scoped?.mailAccount?.name,
+    };
+    result.calendar = {
+      ...result.calendar,
+      cvsHealth: Boolean(scoped?.calendar),
+      calendar: scoped?.calendar?.name,
+      account: scoped?.calendar?.account || undefined,
+    };
+    result.ok = result.ok && result.mail.cvsHealth === true && result.calendar.cvsHealth === true;
+    if (!result.mail.cvsHealth) result.mail.error = result.mail.error || "cvs_health_mail_not_found";
+    if (!result.calendar.cvsHealth) result.calendar.error = result.calendar.error || "cvs_health_calendar_not_found";
+  }
+  return result;
+}
+
+async function mailListAccounts(apps, { profile = "full" } = {}) {
+  const listed = await apps.mailListAccounts();
+  let accounts = listed.accounts.map(publicMailAccount);
+  if (profile === "notion-cvs") accounts = accounts.filter((account) => account.cvsHealth);
+  return { ok: true, client: "mail", total: accounts.length, accounts };
+}
+
+async function calendarListCalendars(apps, { profile = "full" } = {}) {
+  const listed = await apps.calendarListCalendars();
+  let calendars = listed.calendars.map(publicCalendar);
+  if (profile === "notion-cvs") calendars = calendars.filter((calendar) => calendar.cvsHealth);
+  return { ok: true, client: "calendar", total: calendars.length, calendars };
+}
+
+async function withCvsHealthScope(apps, name, args) {
+  if (name === "rico_local_apps_health") {
+    const [accounts, calendars] = await Promise.all([
+      apps.mailListAccounts(),
+      apps.calendarListCalendars(),
+    ]);
+    return {
+      ...args,
+      mailAccount: pickCvsHealthMailAccount(accounts.accounts),
+      calendar: pickCvsHealthCalendar(calendars.calendars),
+    };
+  }
+  if (name === "rico_mail_list_inbox" || name === "rico_mail_get") {
+    const listed = await apps.mailListAccounts();
+    const requested = optionalName(args?.account, "mail_account_invalid");
+    const account = requested
+      ? listed.accounts.find((item) => item.name === requested)
+      : pickCvsHealthMailAccount(listed.accounts);
+    if (!account || !isCvsHealthMailAccount(account)) {
+      throw fail("cvs_health_mail_not_found", "The CVS Health Mail.app account was not found.");
+    }
+    return {
+      ...args,
+      account: account.name,
+      mailbox: optionalName(args?.mailbox, "mail_mailbox_invalid") ?? DEFAULT_MAILBOX_NAME,
+    };
+  }
+  if (name === "rico_calendar_list" || name === "rico_calendar_upsert") {
+    const listed = await apps.calendarListCalendars();
+    const requestedName = optionalName(args?.calendar, "calendar_name_invalid");
+    const requestedAccount = optionalName(args?.account, "calendar_account_invalid");
+    const allowed = listed.calendars.filter(isCvsHealthCalendar);
+    let calendar = requestedName
+      ? allowed.find((item) => item.name === requestedName && (!requestedAccount || !item.account || item.account === requestedAccount))
+      : pickCvsHealthCalendar(listed.calendars);
+    if (!calendar) {
+      throw fail("cvs_health_calendar_not_found", "The CVS Health Calendar.app calendar was not found.");
+    }
+    return {
+      ...args,
+      calendar: calendar.name,
+      account: requestedAccount || calendar.account || undefined,
+    };
+  }
+  return args ?? {};
 }
 
 function publicAppHealth(result) {
@@ -229,6 +371,7 @@ function calendarUpsert(apps, args) {
   return apps.calendarUpsert({
     id: optionalName(args?.id, "calendar_id_invalid", 256),
     calendar: requiredName(args?.calendar, "calendar_name_invalid", 80),
+    account: optionalName(args?.account, "calendar_account_invalid"),
     title: sanitizeTitle(args?.title),
     start: args?.start,
     end: args?.end,

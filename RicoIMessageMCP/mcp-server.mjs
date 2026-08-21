@@ -1,11 +1,19 @@
-import { MCP_PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
+import { MCP_PROTOCOL_VERSION, NOTION_SERVER_NAME, SERVER_NAME, SERVER_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
 import { publicError } from "./errors.mjs";
-import { callTool, TOOL_DEFINITIONS } from "./tools.mjs";
+import { callTool, NOTION_TOOL_DEFINITIONS, TOOL_DEFINITIONS } from "./tools.mjs";
+
+const FULL_INSTRUCTIONS = "Narrow Rico OpenClaw bridge on this Mac. iMessage: rico_imessage_health, rico_imessage_can_send, rico_imessage_send (allowlisted E.164 or chat_id only). Local apps: rico_local_apps_health, rico_mail_* (allowlisted send), rico_calendar_*, rico_outlook_* (governed Outlook recipients only). This is not the OpenClaw Gateway and does not expose arbitrary Gateway methods.";
+const NOTION_INSTRUCTIONS = "Notion-facing Rico OpenClaw bridge on this Mac. Tools are limited to the reviewed CVS Health Apple Mail mailbox and Calendar.app (iCal) calendar. No iMessage, Outlook, or Mail send. Calendar upsert stays on the CVS Health calendar and invites no attendees.";
 
 export class RicoIMessageMcpServer {
-  constructor({ runtime } = {}) {
+  constructor({ runtime, profile = "full" } = {}) {
     this.runtime = runtime;
+    this.profile = profile === "notion-cvs" ? "notion-cvs" : "full";
     this.initialized = false;
+  }
+
+  toolDefinitions() {
+    return this.profile === "notion-cvs" ? NOTION_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
   }
 
   async handle(message) {
@@ -21,14 +29,17 @@ export class RicoIMessageMcpServer {
       return rpcResult(message.id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        instructions: "Narrow Rico OpenClaw bridge on this Mac. iMessage: rico_imessage_health, rico_imessage_can_send, rico_imessage_send (allowlisted E.164 or chat_id only). Local apps: rico_local_apps_health, rico_mail_* (allowlisted send), rico_calendar_*, rico_outlook_* (governed Outlook recipients only). This is not the OpenClaw Gateway and does not expose arbitrary Gateway methods.",
+        serverInfo: {
+          name: this.profile === "notion-cvs" ? NOTION_SERVER_NAME : SERVER_NAME,
+          version: SERVER_VERSION,
+        },
+        instructions: this.profile === "notion-cvs" ? NOTION_INSTRUCTIONS : FULL_INSTRUCTIONS,
       });
     }
     if (message.method === "notifications/initialized" || message.method === "notifications/cancelled") return null;
     if (message.method === "ping") return notification ? null : rpcResult(message.id, {});
     if (!this.initialized) return notification ? null : rpcError(message.id, -32002, "Server not initialized");
-    if (message.method === "tools/list") return notification ? null : rpcResult(message.id, { tools: TOOL_DEFINITIONS });
+    if (message.method === "tools/list") return notification ? null : rpcResult(message.id, { tools: this.toolDefinitions() });
     if (message.method === "tools/call") {
       if (notification) return null;
       const name = message.params?.name;
@@ -37,7 +48,7 @@ export class RicoIMessageMcpServer {
         return rpcError(message.id, -32602, "Invalid params");
       }
       try {
-        const result = await callTool(this.runtime, name, args);
+        const result = await callTool(this.runtime, name, args, { profile: this.profile });
         return rpcResult(message.id, toolResult(result, false));
       } catch (error) {
         return rpcResult(message.id, toolResult(publicError(error), true));
