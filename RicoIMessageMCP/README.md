@@ -14,10 +14,13 @@ OpenTable MCP and Uber MCP stay disabled. SIP is unchanged. Twilio/A2P Funnel on
 | `rico_imessage_health` | Loopback OpenClaw Gateway reachability plus iMessage `probe.ok`. No tokens, account IDs, or raw status dumps. |
 | `rico_imessage_can_send` | Allowlist check only. Does **not** send and does **not** call Gateway `send`. |
 | `rico_local_apps_health` | Mail.app, Calendar.app, and Outlook reachable? Installed/configured only. No tokens or account IDs. |
-| `rico_mail_list_inbox` | Bounded recent Apple Mail inbox metadata (default/max 15). Not a mailbox scrape. |
-| `rico_mail_get` | One inbox message by id. Body truncated. |
+| `rico_mail_list_accounts` | Apple Mail account names on this Mac. No mailbox contents. Extra email addresses are stripped before the tool result. |
+| `rico_mail_list_inbox` | Bounded recent Apple Mail inbox metadata (default/max 15). Optional `account` selects one Mail.app account instead of the unified inbox. |
+| `rico_mail_get` | One inbox message by id. Body truncated. Optional `account` scopes the lookup. |
 | `rico_mail_send` | Send/reply from Mail.app **only** to an allowlisted address (person-email authorization, owner account, or recipient-guard email). |
-| `rico_calendar_list` | Upcoming Calendar.app events in a bounded window (default 7 days, max 14; max 25 events). |
+| `rico_calendar_list_calendars` | Calendar.app (iCal) names, with account/source when EventKit can provide it. |
+| `rico_calendar_list` | Upcoming Calendar.app events in a bounded window (default 7 days, max 14; max 25 events). Optional `calendar` and `account`. |
+| `rico_calendar_export_notion` | CVS Health iCal events as Notion Calendar database payloads plus a local ICS body. Does not write to Notion or copy to personal Google/iCloud. |
 | `rico_calendar_upsert` | Create or update one local event on a named calendar. No attendees. |
 | `rico_outlook_list_inbox` | Bounded recent Outlook inbox metadata. Clear error if Outlook is missing. |
 | `rico_outlook_get` | One Outlook inbox message by id. Clear error if Outlook is missing. |
@@ -34,10 +37,13 @@ Inbound iMessage → runner.now is **not built**. runner.now Custom MCP is an ou
 | Process | LaunchAgent `ai.polar.rico-imessage-mcp` (`KeepAlive`) |
 | Bind | `127.0.0.1:18791` only (refuses `0.0.0.0` / LAN) |
 | Local MCP | `http://127.0.0.1:18791/mcp` |
+| Notion MCP | `http://127.0.0.1:18792/mcp` (CVS Health Mail + iCal profile) |
 | Tailscale Serve | **port 8444 only** — `https://rico.tail434bbe.ts.net:8444/mcp` (tailnet) |
 | Polar / public MCP | **path-only Funnel** — `https://rico.tail434bbe.ts.net/rico-mcp/mcp` |
+| Notion / public MCP | **path-only Funnel** — `https://rico.tail434bbe.ts.net/notion-mcp/mcp` |
 | Gateway | `ws://127.0.0.1:18789` — this process calls it locally and does not publish it |
 | Token file | `~/Library/Application Support/OpenClaw Studio/secrets/rico-imessage-mcp.token` (`0600`) |
+| Notion token file | `~/Library/Application Support/OpenClaw Studio/secrets/rico-notion-mcp.token` (`0600`) |
 
 Serve on **8444** is tailnet-only. Polar’s remote Grok Bot box is not on this tailnet, so Polar uses path-only Funnel `/rico-mcp` on **443**. SMS Funnel `/webhooks/sms` stays. Do not Funnel Gateway `18789`. Do not Serve MCP as `/` on `443`.
 
@@ -45,8 +51,8 @@ Serve on **8444** is tailnet-only. Polar’s remote Grok Bot box is not on this 
 
 ```sh
 cd /Users/alan/OpenClawStudio/RicoIMessageMCP
-node index.mjs --init-token    # prints the token *path* only
-node index.mjs                 # listens on http://127.0.0.1:18791/mcp
+node index.mjs --init-token    # prints the iMessage and Notion token *paths* only
+node index.mjs                 # listens on :18791 (full) and :18792 (Notion CVS Health)
 ```
 
 `--init-token` creates the bearer file if missing and prints **only the path**. The server never prints the token.
@@ -94,6 +100,31 @@ After pulling new tools, reload the LaunchAgent and quit/reopen **Grok Bot.app**
 launchctl kickstart -k "gui/$(id -u)/ai.polar.rico-imessage-mcp"
 ```
 
+## Notion Custom Agent (CVS Health Mail + iCal)
+
+Notion Custom Agents connect over **public HTTPS** with a bearer token. They must not receive iMessage send, Mail send, or Outlook. This process therefore exposes a second loopback port with a **CVS Health-only** tool profile.
+
+| Field | Value |
+| --- | --- |
+| **Name** | `Rico OpenClaw Mail + iCal` |
+| **HTTPS endpoint** | `https://rico.tail434bbe.ts.net/notion-mcp/mcp` |
+| **Authentication** | Bearer token |
+| **Bearer token** | Contents of `~/Library/Application Support/OpenClaw Studio/secrets/rico-notion-mcp.token` — paste in Notion’s connection field only |
+| **Tools** | `rico_local_apps_health`, `rico_mail_list_accounts`, `rico_mail_list_inbox`, `rico_mail_get`, `rico_calendar_list_calendars`, `rico_calendar_list`, `rico_calendar_export_notion`, `rico_calendar_upsert` |
+
+The Notion profile auto-selects the reviewed CVS Health Apple Mail account (`alan.rosa@cvshealth.com` / account name **CVS Health**) and the CVS Health Calendar.app source. Personal iCloud/Gmail mailboxes and calendars are not listed and are rejected if requested by name.
+
+Work meetings overlay in the local Notion Calendar database [CVS Health Calendar](https://app.notion.com/p/2d7750e6a6504612a06e8fe5f515e1a8). After `rico_calendar_export_notion`, create or update those pages in Notion. Then in **Notion Calendar**: Settings → Calendars → add that Notion database. Do not copy CVS Health iCal into personal Google or iCloud.
+
+In Notion (Business/Enterprise, Custom MCP enabled):
+
+1. Settings → Notion AI → AI connectors → Enable Custom MCP servers.
+2. Open the Custom Agent → Tools & Access → Add connection → Custom MCP server.
+3. Paste the HTTPS endpoint and the Notion bearer token. Do not paste the iMessage MCP token.
+4. Enable only the tools above. Leave send tools unavailable (they are not listed on this profile).
+
+The Notion Funnel path is a **different local port** (`18792`) so a prefix-stripped Funnel request cannot reach iMessage send on `18791`.
+
 ## Polar (remote Grok Bot)
 
 Polar (`grokbot:polar`) runs on a cloud box (`/home/box/...`). It does **not** load `~/.cursor/mcp.json` or `~/.grokbot/mcp.json` on this Mac. Those files are why Cursor on Rico already has `rico-openclaw`. Polar only sees **account / catalog connectors** (today: Gmail, Drive, Limitless, Plaud).
@@ -116,7 +147,7 @@ Persist Funnel (already applied on this Mac):
 ./funnel-public.sh
 ```
 
-Confirm with `tailscale funnel status` that `443` lists `/rico-mcp` **and** `/webhooks/sms`.
+Confirm with `tailscale funnel status` that `443` lists `/rico-mcp`, `/notion-mcp`, **and** `/webhooks/sms`.
 
 ## runner.now Connected Apps
 
@@ -170,18 +201,18 @@ Example tool call after connect:
 
 | Layer | Rule |
 | --- | --- |
-| Bind | Loopback only. Tailnet clients use Serve on **8444**. Polar uses path-only Funnel `/rico-mcp`. |
+| Bind | Loopback only. Tailnet clients use Serve on **8444**. Polar uses path-only Funnel `/rico-mcp`. Notion uses path-only Funnel `/notion-mcp` on a separate local port. |
 | Host | Loopback or `*.tail*.ts.net` MagicDNS. Other Host headers → 403. |
 | Auth | Bearer token in a `0600` file. Missing/wrong token → 401. |
 | Allowlist | Guard identities + native `allowFrom` / groups. Strangers never reach `send`. |
 | Gateway | This process calls loopback `ws://127.0.0.1:18789`. It does not proxy arbitrary Gateway methods. |
-| Funnel | MCP is path-only `/rico-mcp` on 443. SMS `/webhooks/sms` is unchanged. Gateway port is not Funnelled. |
+| Funnel | MCP is path-only `/rico-mcp` and `/notion-mcp` on 443. SMS `/webhooks/sms` is unchanged. Gateway port is not Funnelled. Notion uses a separate local port and bearer token. |
 | Secrets | Token path may be printed. Token values, Gateway tokens, and account IDs are not. |
 
 ## What is not built
 
 - Inbound iMessage bridge / webhook POST to runner.now
-- Full-port public MCP (only path `/rico-mcp` is Funnelled; Gateway `18789` is not)
+- Full-port public MCP (only paths `/rico-mcp` and `/notion-mcp` are Funnelled; Gateway `18789` is not)
 - LAN / internet bind of the OpenClaw Gateway
 - `openclaw mcp serve` (full conversation/history/approval surface)
 - OpenTable MCP, Uber MCP, or any other tool catalog
@@ -195,4 +226,4 @@ cd /Users/alan/OpenClawStudio/RicoIMessageMCP
 npm test
 ```
 
-Allowlist reject/allow, `can_send`, Mail/Outlook stranger reject, Outlook-missing errors, and HTTP auth are covered **without a live iMessage or email send**. AppleScript is mocked.
+Allowlist reject/allow, `can_send`, Mail/Outlook stranger reject, Outlook-missing errors, HTTP auth, CVS Health mailbox/calendar matching, and the Notion tool profile are covered **without a live iMessage or email send**. AppleScript is mocked.

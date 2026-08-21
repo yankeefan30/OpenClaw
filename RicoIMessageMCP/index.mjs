@@ -4,9 +4,12 @@ import { authorizeRecipient } from "./allowlist.mjs";
 import {
   DEFAULT_BIND_HOST,
   DEFAULT_GATEWAY_URL,
+  DEFAULT_NOTION_PORT,
   DEFAULT_PORT,
+  NOTION_SERVER_NAME,
   SERVER_NAME,
   SERVER_VERSION,
+  defaultNotionTokenPath,
   defaultOpenClawConfigPath,
   defaultPolicyPath,
   defaultTokenPath,
@@ -17,7 +20,7 @@ import { createHttpServer } from "./http-server.mjs";
 import { RicoIMessageMcpServer } from "./mcp-server.mjs";
 import { DEFAULT_LOOPBACK_MCP_URL, loopbackMcpUrlFromEnv, proxyStdioToLoopbackHttp } from "./stdio-proxy.mjs";
 import { createLocalApps } from "./local-apps.mjs";
-import { TOOL_DEFINITIONS } from "./tools.mjs";
+import { TOOL_DEFINITIONS, NOTION_TOOL_DEFINITIONS } from "./tools.mjs";
 import { ensureBearerTokenFile, readBearerToken, readGatewayToken, readOpenClawConfig } from "./secrets.mjs";
 
 export function createRuntime({
@@ -57,15 +60,23 @@ async function main(argv = process.argv.slice(2)) {
       transport: "streamable-http",
       bind: DEFAULT_BIND_HOST,
       tools: TOOL_DEFINITIONS.map((tool) => tool.name),
+      notion: {
+        server: NOTION_SERVER_NAME,
+        port: DEFAULT_NOTION_PORT,
+        path: "/notion-mcp/mcp",
+        tools: NOTION_TOOL_DEFINITIONS.map((tool) => tool.name),
+      },
       gateway: DEFAULT_GATEWAY_URL,
       tokenPath: defaultTokenPath(),
+      notionTokenPath: defaultNotionTokenPath(),
       networkCallsPerformed: 0,
     }, null, 2)}\n`);
     return;
   }
   if (argv.length === 1 && argv[0] === "--init-token") {
     const result = ensureBearerTokenFile(tokenPathFromEnv());
-    process.stdout.write(`${result.path}\n`);
+    const notionResult = ensureBearerTokenFile(notionTokenPathFromEnv());
+    process.stdout.write(`${result.path}\n${notionResult.path}\n`);
     return;
   }
   if (argv.length === 1 && argv[0] === "--stdio") {
@@ -83,8 +94,15 @@ async function main(argv = process.argv.slice(2)) {
   const tokenPath = tokenPathFromEnv();
   const tokenResult = ensureBearerTokenFile(tokenPath);
   const token = readBearerToken(tokenResult.path);
+  const notionTokenPath = notionTokenPathFromEnv();
+  const notionTokenResult = ensureBearerTokenFile(notionTokenPath);
+  const notionToken = readBearerToken(notionTokenResult.path);
   const host = DEFAULT_BIND_HOST;
   const port = portFromEnv();
+  const notionPort = notionPortFromEnv();
+  if (notionPort === port) {
+    throw new Error("RICO_NOTION_MCP_PORT must differ from the Rico iMessage MCP port.");
+  }
   const gatewayUrl = gatewayUrlFromEnv();
   assertLoopbackGatewayUrl(gatewayUrl);
 
@@ -95,19 +113,31 @@ async function main(argv = process.argv.slice(2)) {
     localApps: createLocalApps(),
   });
   const http = createHttpServer({
-    mcpServer: new RicoIMessageMcpServer({ runtime }),
+    mcpServer: new RicoIMessageMcpServer({ runtime, profile: "full" }),
     token,
     host,
     port,
   });
-  const address = await http.listen();
+  const notionHttp = createHttpServer({
+    mcpServer: new RicoIMessageMcpServer({ runtime, profile: "notion-cvs" }),
+    token: notionToken,
+    host,
+    port: notionPort,
+  });
+  const [address, notionAddress] = await Promise.all([http.listen(), notionHttp.listen()]);
   process.stdout.write(`Rico iMessage MCP listening on http://${host}:${address.port}/mcp\n`);
+  process.stdout.write(`Rico Notion MCP listening on http://${host}:${notionAddress.port}/mcp\n`);
   process.stdout.write(`Bearer token file: ${tokenResult.path}\n`);
+  process.stdout.write(`Notion bearer token file: ${notionTokenResult.path}\n`);
   process.stdout.write("Bind: loopback only. This is not the OpenClaw Gateway.\n");
 }
 
 function tokenPathFromEnv() {
   return process.env.RICO_IMESSAGE_MCP_TOKEN_FILE || defaultTokenPath();
+}
+
+function notionTokenPathFromEnv() {
+  return process.env.RICO_NOTION_MCP_TOKEN_FILE || defaultNotionTokenPath();
 }
 
 function portFromEnv() {
@@ -120,6 +150,16 @@ function portFromEnv() {
   return port;
 }
 
+function notionPortFromEnv() {
+  const raw = process.env.RICO_NOTION_MCP_PORT;
+  if (raw == null || raw === "") return DEFAULT_NOTION_PORT;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("RICO_NOTION_MCP_PORT is invalid.");
+  }
+  return port;
+}
+
 function gatewayUrlFromEnv() {
   return process.env.RICO_IMESSAGE_MCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
 }
@@ -128,8 +168,9 @@ function usage() {
   return `Usage: node index.mjs [--selftest | --init-token | --stdio]
 
 Loopback streamable-HTTP MCP for Rico iMessage plus local Mail, Calendar, and Outlook.
-Binds ${DEFAULT_BIND_HOST}:${DEFAULT_PORT}/mcp. --stdio proxies NDJSON to that URL
-after reading the bearer file. Does not expose the OpenClaw Gateway.
+Binds ${DEFAULT_BIND_HOST}:${DEFAULT_PORT}/mcp. Notion CVS Health Mail/iCal profile
+binds ${DEFAULT_BIND_HOST}:${DEFAULT_NOTION_PORT}/mcp. --stdio proxies NDJSON to the
+iMessage URL after reading the bearer file. Does not expose the OpenClaw Gateway.
 `;
 }
 
