@@ -20,6 +20,7 @@ OpenTable MCP and Uber MCP stay disabled. SIP is unchanged. Twilio/A2P Funnel on
 | `rico_mail_send` | Send/reply from Mail.app **only** to an allowlisted address (person-email authorization, owner account, or recipient-guard email). |
 | `rico_calendar_list_calendars` | Calendar.app (iCal) names, with account/source when EventKit can provide it. |
 | `rico_calendar_list` | Upcoming Calendar.app events in a bounded window (default 7 days, max 14; max 25 events). Optional `calendar` and `account`. |
+| `rico_calendar_export_notion` | CVS Health iCal events as Notion Calendar database payloads plus a local ICS body. Does not write to Notion or copy to personal Google/iCloud. |
 | `rico_calendar_upsert` | Create or update one local event on a named calendar. No attendees. |
 | `rico_outlook_list_inbox` | Bounded recent Outlook inbox metadata. Clear error if Outlook is missing. |
 | `rico_outlook_get` | One Outlook inbox message by id. Clear error if Outlook is missing. |
@@ -109,9 +110,11 @@ Notion Custom Agents connect over **public HTTPS** with a bearer token. They mus
 | **HTTPS endpoint** | `https://rico.tail434bbe.ts.net/notion-mcp/mcp` |
 | **Authentication** | Bearer token |
 | **Bearer token** | Contents of `~/Library/Application Support/OpenClaw Studio/secrets/rico-notion-mcp.token` — paste in Notion’s connection field only |
-| **Tools** | `rico_local_apps_health`, `rico_mail_list_accounts`, `rico_mail_list_inbox`, `rico_mail_get`, `rico_calendar_list_calendars`, `rico_calendar_list`, `rico_calendar_upsert` |
+| **Tools** | `rico_local_apps_health`, `rico_mail_list_accounts`, `rico_mail_list_inbox`, `rico_mail_get`, `rico_calendar_list_calendars`, `rico_calendar_list`, `rico_calendar_export_notion`, `rico_calendar_upsert` |
 
 The Notion profile auto-selects the reviewed CVS Health Apple Mail account (`alan.rosa@cvshealth.com` / account name **CVS Health**) and the CVS Health Calendar.app source. Personal iCloud/Gmail mailboxes and calendars are not listed and are rejected if requested by name.
+
+Work meetings overlay in the local Notion Calendar database [CVS Health Calendar](https://app.notion.com/p/2d7750e6a6504612a06e8fe5f515e1a8). After `rico_calendar_export_notion`, create or update those pages in Notion. Then in **Notion Calendar**: Settings → Calendars → add that Notion database. Do not copy CVS Health iCal into personal Google or iCloud.
 
 In Notion (Business/Enterprise, Custom MCP enabled):
 

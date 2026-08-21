@@ -46,6 +46,7 @@ test("MCP server initializes and lists Rico iMessage plus local-app tools", asyn
     "rico_mail_send",
     "rico_calendar_list_calendars",
     "rico_calendar_list",
+    "rico_calendar_export_notion",
     "rico_calendar_upsert",
     "rico_outlook_list_inbox",
     "rico_outlook_get",
@@ -66,7 +67,7 @@ test("health reports gateway + probe.ok and never echoes secrets", async () => {
     gatewayOnline: true,
     imessageProbeOk: true,
     bridge: "rico-imessage-mcp",
-    version: "0.4.0",
+    version: "0.4.1",
   });
   assert.ok(!JSON.stringify(result).includes(secret));
   assert.ok(!JSON.stringify(result).includes("should-not-leak"));
@@ -84,7 +85,7 @@ test("health stays fail-closed when the probe is not ok", async () => {
     gatewayOnline: true,
     imessageProbeOk: false,
     bridge: "rico-imessage-mcp",
-    version: "0.4.0",
+    version: "0.4.1",
   });
 });
 
@@ -147,6 +148,7 @@ test("Notion profile lists only CVS Health Mail and iCal tools", async () => {
     "rico_mail_get",
     "rico_calendar_list_calendars",
     "rico_calendar_list",
+    "rico_calendar_export_notion",
     "rico_calendar_upsert",
   ]);
   const denied = await mcp.handle({

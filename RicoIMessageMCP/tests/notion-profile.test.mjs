@@ -66,6 +66,12 @@ test("Notion profile auto-scopes mail and calendar to CVS Health", async () => {
   assert.equal(events.calendar, "Calendar");
   assert.equal(events.account, "CVS Health");
   assert.equal(events.events[0].title, "1:1");
+
+  const exported = await callTool(cvsRuntime(), "rico_calendar_export_notion", { days: 7 }, { profile: "notion-cvs" });
+  assert.equal(exported.calendar, "Calendar");
+  assert.equal(exported.account, "CVS Health");
+  assert.equal(exported.copyToPersonalCalendars, false);
+  assert.equal(exported.creates[0].properties.Name, "1:1");
 });
 
 test("Notion profile refuses personal mailboxes and calendars", async () => {

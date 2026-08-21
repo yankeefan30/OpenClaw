@@ -12,6 +12,7 @@ import {
   DEFAULT_OUTLOOK_APP_PATH,
   MAIL_BUNDLE_ID,
   MAX_CALENDAR_EVENTS,
+  MAX_CALENDAR_EXPORT_EVENTS,
   MAX_CALENDAR_NAMES,
   MAX_CALENDAR_NOTES_CHARS,
   MAX_CALENDAR_TITLE_CHARS,
@@ -137,7 +138,7 @@ export function createLocalApps({
       };
     },
 
-    async calendarList({ days = DEFAULT_CALENDAR_DAYS, calendar, account } = {}) {
+    async calendarList({ days = DEFAULT_CALENDAR_DAYS, calendar, account, limit } = {}) {
       const windowDays = boundedDays(days);
       const start = now();
       const end = new Date(start.getTime() + windowDays * 86_400_000);
@@ -146,7 +147,7 @@ export function createLocalApps({
         end,
         calendar: calendar ?? "",
         account: account ?? "",
-        limit: MAX_CALENDAR_EVENTS,
+        limit: boundedCalendarLimit(limit),
       });
       return {
         ok: true,
@@ -440,6 +441,13 @@ function boundedDays(days) {
   const value = Number(days);
   if (!Number.isInteger(value) || value < 1) return DEFAULT_CALENDAR_DAYS;
   return Math.min(value, 14);
+}
+
+function boundedCalendarLimit(limit) {
+  if (limit == null || limit === "") return MAX_CALENDAR_EVENTS;
+  const value = Number(limit);
+  if (!Number.isInteger(value) || value < 1) return MAX_CALENDAR_EVENTS;
+  return Math.min(value, MAX_CALENDAR_EXPORT_EVENTS);
 }
 
 function requireDate(value, code) {

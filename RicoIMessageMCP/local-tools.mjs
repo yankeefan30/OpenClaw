@@ -3,6 +3,7 @@ import {
   DEFAULT_CALENDAR_DAYS,
   DEFAULT_MAILBOX_NAME,
   MAX_CALENDAR_DAYS,
+  MAX_CALENDAR_EXPORT_EVENTS,
   MAX_CALENDAR_NOTES_CHARS,
   MAX_CALENDAR_TITLE_CHARS,
   MAX_IDEMPOTENCY_CHARS,
@@ -25,6 +26,7 @@ import {
 import { authorizeEmailRecipient, loadEmailAuthorizations } from "./email-allowlist.mjs";
 import { fail } from "./errors.mjs";
 import { createLocalApps } from "./local-apps.mjs";
+import { eventsToIcs, notionCvsCalendarTarget, planNotionSync } from "./notion-calendar-sync.mjs";
 
 export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
   {
@@ -94,6 +96,21 @@ export const LOCAL_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "rico_calendar_list",
     description: "List upcoming Calendar.app events in a bounded window. Optional calendar and account names limit the search to one iCal calendar.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        days: { type: "integer", minimum: 1, maximum: MAX_CALENDAR_DAYS, description: "Forward window in days." },
+        calendar: { type: "string", minLength: 1, maxLength: 80, description: "Exact local calendar name." },
+        account: { type: "string", minLength: 1, maxLength: 80, description: "Exact Calendar account/source name." },
+      },
+      required: [],
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "rico_calendar_export_notion",
+    description: "Export upcoming CVS Health Calendar.app (iCal) events as Notion page payloads for the CVS Health Calendar database, plus a local ICS body. Does not write to Notion or copy events to personal Google/iCloud calendars.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -180,6 +197,7 @@ export const NOTION_TOOL_NAMES = Object.freeze([
   "rico_mail_get",
   "rico_calendar_list_calendars",
   "rico_calendar_list",
+  "rico_calendar_export_notion",
   "rico_calendar_upsert",
 ]);
 
@@ -228,6 +246,8 @@ export async function callLocalTool(runtime, name, args, { profile = "full" } = 
         calendar: optionalName(scoped?.calendar, "calendar_name_invalid"),
         account: optionalName(scoped?.account, "calendar_account_invalid"),
       });
+    case "rico_calendar_export_notion":
+      return calendarExportNotion(apps, scoped);
     case "rico_calendar_upsert":
       return calendarUpsert(apps, scoped);
     case "rico_outlook_list_inbox":
@@ -316,7 +336,7 @@ async function withCvsHealthScope(apps, name, args) {
       mailbox: optionalName(args?.mailbox, "mail_mailbox_invalid") ?? DEFAULT_MAILBOX_NAME,
     };
   }
-  if (name === "rico_calendar_list" || name === "rico_calendar_upsert") {
+  if (name === "rico_calendar_list" || name === "rico_calendar_export_notion" || name === "rico_calendar_upsert") {
     const listed = await apps.calendarListCalendars();
     const requestedName = optionalName(args?.calendar, "calendar_name_invalid");
     const requestedAccount = optionalName(args?.account, "calendar_account_invalid");
@@ -365,6 +385,31 @@ async function outlookSend(runtime, apps, args) {
     text: sanitizeBody(args?.text),
     idempotencyKey: sanitizeIdempotency(args?.idempotencyKey),
   });
+}
+
+async function calendarExportNotion(apps, args) {
+  const listed = await apps.calendarList({
+    days: args?.days ?? DEFAULT_CALENDAR_DAYS,
+    calendar: optionalName(args?.calendar, "calendar_name_invalid"),
+    account: optionalName(args?.account, "calendar_account_invalid"),
+    limit: MAX_CALENDAR_EXPORT_EVENTS,
+  });
+  const planned = planNotionSync({
+    events: listed.events,
+    account: listed.account || "CVS Health",
+  });
+  return {
+    ok: true,
+    client: "calendar",
+    windowDays: listed.windowDays,
+    calendar: listed.calendar,
+    account: listed.account,
+    truncated: listed.truncated === true,
+    target: notionCvsCalendarTarget(),
+    creates: planned.creates,
+    ics: eventsToIcs(listed.events, { calendarName: listed.calendar || "CVS Health" }),
+    copyToPersonalCalendars: false,
+  };
 }
 
 function calendarUpsert(apps, args) {
