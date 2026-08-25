@@ -1,0 +1,194 @@
+#!/bin/bash
+# Unblock a local Hedy.app launch. Not OpenClaw. Darwin mutation only.
+# Does not disable SIP, Gatekeeper, or run a free-form shell.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: hedy-allow-launch [--dry-run] [--app /path/to/Hedy.app]
+
+Finds the Hedy desktop app, copies it to a new inode, strips the quarantine
+flag, replaces the blocked copy, and opens it. Refuses any other bundle.
+EOF
+}
+
+DRY_RUN=0
+PINNED_APP=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --app)
+      [ $# -ge 2 ] || { echo "hedy-allow-launch: --app needs a path" >&2; exit 2; }
+      PINNED_APP="$2"
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      echo "hedy-allow-launch: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+is_darwin() { [ "$(uname -s)" = "Darwin" ]; }
+
+plist_value() {
+  local plist="$1" key="$2"
+  if command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null || true
+    return 0
+  fi
+  # Linux / dry-run fallback: read a simple <key>/<string> pair.
+  python3 - "$plist" "$key" <<'PY' 2>/dev/null || true
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+key = re.escape(sys.argv[2])
+match = re.search(r"<key>%s</key>\s*<string>([^<]*)</string>" % key, text)
+if match:
+    print(match.group(1))
+PY
+}
+
+is_hedy_label() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    hedy|hedy.ai|hedy\ ai) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_hedy_ident() {
+  printf '%s' "$1" | grep -qiE '(^|[.])hedy([.]|$)'
+}
+
+looks_like_hedy() {
+  local app="$1"
+  local plist="$app/Contents/Info.plist"
+  [ -d "$app" ] || return 1
+  [ -f "$plist" ] || return 1
+  local name ident display
+  name="$(plist_value "$plist" CFBundleName)"
+  display="$(plist_value "$plist" CFBundleDisplayName)"
+  ident="$(plist_value "$plist" CFBundleIdentifier)"
+  is_hedy_label "$name" && return 0
+  is_hedy_label "$display" && return 0
+  is_hedy_ident "$ident" && return 0
+  return 1
+}
+
+candidate_paths() {
+  if [ -n "$PINNED_APP" ]; then
+    printf '%s\n' "$PINNED_APP"
+    return 0
+  fi
+  printf '%s\n' \
+    "/Applications/Hedy.app" \
+    "/Applications/Hedy AI.app" \
+    "${HOME}/Applications/Hedy.app" \
+    "${HOME}/Applications/Hedy AI.app"
+  if is_darwin; then
+    # Official disk image mount names vary; keep the search Hedy-only.
+    find /Volumes -maxdepth 2 -type d -name 'Hedy.app' 2>/dev/null || true
+  fi
+}
+
+resolve_app() {
+  local path
+  if [ -n "$PINNED_APP" ]; then
+    printf '%s\n' "$PINNED_APP"
+    return 0
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if looks_like_hedy "$path"; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done < <(candidate_paths)
+  return 1
+}
+
+require_darwin_for_mutate() {
+  if is_darwin; then
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    return 0
+  fi
+  echo "hedy-allow-launch: refusing to mutate a non-Mac host. Pass --dry-run." >&2
+  exit 2
+}
+
+APP="$(resolve_app || true)"
+if [ -z "${APP:-}" ]; then
+  echo "hedy-allow-launch: no Hedy.app found. Install from https://www.hedy.ai/downloads/ then retry." >&2
+  exit 1
+fi
+
+if [ -n "$PINNED_APP" ]; then
+  if [ ! -d "$APP" ]; then
+    echo "hedy-allow-launch: no Hedy.app found. Install from https://www.hedy.ai/downloads/ then retry." >&2
+    exit 1
+  fi
+  if ! looks_like_hedy "$APP"; then
+    echo "hedy-allow-launch: refusing non-Hedy bundle: $APP" >&2
+    exit 1
+  fi
+fi
+
+echo "hedy-allow-launch: target $APP"
+
+if [ "$DRY_RUN" = 1 ]; then
+  echo "hedy-allow-launch: dry-run would-clear-quarantine $APP"
+  echo "hedy-allow-launch: dry-run would-reinode $APP"
+  echo "hedy-allow-launch: dry-run would-open $APP"
+  exit 0
+fi
+
+require_darwin_for_mutate
+
+STAGING="$(mktemp -d "${TMPDIR:-/tmp}/hedy-launch.XXXXXX")"
+cleanup() { rm -rf "$STAGING"; }
+trap cleanup EXIT
+
+STAGE_APP="$STAGING/Hedy.app"
+echo "hedy-allow-launch: copying to new inode"
+ditto "$APP" "$STAGE_APP"
+
+echo "hedy-allow-launch: clearing quarantine"
+xattr -dr com.apple.quarantine "$STAGE_APP" 2>/dev/null || true
+xattr -cr "$STAGE_APP" 2>/dev/null || true
+
+PARENT="$(dirname "$APP")"
+NAME="$(basename "$APP")"
+if [ ! -w "$PARENT" ]; then
+  echo "hedy-allow-launch: $PARENT is not writable by this user. Move Hedy.app to ~/Applications and retry." >&2
+  exit 1
+fi
+
+echo "hedy-allow-launch: replacing blocked copy"
+rm -rf "$APP"
+ditto "$STAGE_APP" "$APP"
+
+if [ ! -d "$APP" ]; then
+  echo "hedy-allow-launch: replace failed; restore from $STAGE_APP before this process exits" >&2
+  trap - EXIT
+  echo "hedy-allow-launch: staged copy left at $STAGE_APP" >&2
+  exit 1
+fi
+
+echo "hedy-allow-launch: opening $NAME"
+open "$APP"
+
+cat <<'EOF'
+hedy-allow-launch: Hedy should bounce in the Dock.
+
+If macOS still shows cannot be opened, go to System Settings -> Privacy &
+Security immediately and click Open Anyway.
+
+Hedy still needs owner grants (this script does not write TCC):
+  System Settings -> Privacy & Security -> Microphone -> Hedy
+  System Settings -> Privacy & Security -> Screen Recording -> Hedy
+EOF
