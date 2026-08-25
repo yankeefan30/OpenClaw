@@ -15,6 +15,7 @@ set -euo pipefail
 setopt nounset
 setopt pipefail
 setopt extendedglob
+setopt typesetsilent
 
 typeset -r SCRIPT_VERSION="1.0.0"
 typeset -r SCRIPT_PATH="${0:A}"
@@ -133,14 +134,15 @@ must_be_under() {
 }
 
 file_sha256() {
-  local file="$1"
+  local file="$1" out
   if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -- "$file" | awk '{print $1}'
+    out="$(shasum -a 256 -- "$file")"
   elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -- "$file" | awk '{print $1}'
+    out="$(sha256sum -- "$file")"
   else
     fail "no shasum/sha256sum on PATH"
   fi
+  print -r -- "${${(s: :)out}[1]}"
 }
 
 copy_file() {
@@ -288,21 +290,24 @@ capture_df() {
   df -h "$target" 2>/dev/null || df -h "$target"
 }
 
+du_size() {
+  local target="$1" out
+  out="$(du -sh "$target" 2>/dev/null || true)"
+  out="${out%%$'\t'*}"
+  print -r -- "${out%% *}"
+}
+
 append_audit_line() {
-  local label="$1" path="$2"
-  if [[ ! -e "$path" ]]; then
-    log "AUDIT  ${label}: (absent)  ${path}"
+  local label="$1" target="$2"
+  if [[ ! -e "$target" ]]; then
+    log "AUDIT  ${label}: (absent)  ${target}"
     return
   fi
-  if path_is_protected "$path"; then
-    local size
-    size="$(du -sh "$path" 2>/dev/null | awk '{print $1}')"
-    log "AUDIT  ${label}: ${size:-?}  ${path}  [PROTECTED — leave on internal disk]"
+  if path_is_protected "$target"; then
+    log "AUDIT  ${label}: $(du_size "$target")  ${target}  [PROTECTED — leave on internal disk]"
     return
   fi
-  local size
-  size="$(du -sh "$path" 2>/dev/null | awk '{print $1}')"
-  log "AUDIT  ${label}: ${size:-?}  ${path}"
+  log "AUDIT  ${label}: $(du_size "$target")  ${target}"
 }
 
 audit_usual_hogs() {
@@ -339,7 +344,7 @@ audit_usual_hogs() {
     log "AUDIT  Downloads installers / bulky leftovers:"
     local item size
     for item in "$HOME_DIR/Downloads"/*.(#i)(dmg|pkg|iso)(N.); do
-      size="$(du -sh "$item" 2>/dev/null | awk '{print $1}')"
+      size="$(du_size "$item")"
       if path_is_protected "$item"; then
         log "AUDIT    ${size:-?}  ${item}  [PROTECTED skip]"
       else
@@ -350,9 +355,9 @@ audit_usual_hogs() {
 }
 
 skip_protected() {
-  local path="$1" reason="$2"
+  local target="$1" reason="$2"
   SKIPPED_PROTECTED=$((SKIPPED_PROTECTED + 1))
-  log "SKIP   ${path}  (${reason})"
+  log "SKIP   ${target}  (${reason})"
 }
 
 clear_cache_tree() {
@@ -503,7 +508,6 @@ move_installer() {
 
 move_safe_installers() {
   log "---- overflow installers (copy-verify-remove) ----"
-  local search_root
   local search_root item
   for search_root in "$HOME_DIR/Downloads" "$HOME_DIR/Desktop"; do
     [[ -d "$search_root" ]] || continue
