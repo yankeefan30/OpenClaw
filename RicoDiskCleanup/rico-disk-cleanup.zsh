@@ -1,15 +1,18 @@
 #!/bin/zsh
 # Polar / local Cursor playbook runner for original Rico (Mac mini) only.
-# Frees internal APFS space with safe cache clears and copy-then-verify-then-remove
-# overflow onto the existing 4TB G-DRIVE ("Movie Drive").
+# Optimize for Rico performance: keep random-I/O and latency-sensitive data on
+# the internal SSD. Overflow sequential/cold leftovers onto the volume named in
+# overflow-target.zsh (today: 4TB G-DRIVE "Movie Drive"). Swapping that later
+# to a USB4/Thunderbolt SSD is a path change, not a redesign.
 #
 # This script is the thing that touches Rico's disks. A GitHub-only cleanup is
 # not a substitute. Cloud agents cannot see Rico's volumes.
 #
 # Never: format / erase / convert Movie Drive, overwrite movies, disable SIP,
-# reboot, enable Time Machine on Movie Drive, move Littlebird or Hedy, touch
-# Messages/chat.db / Keychain / secrets, move LM Studio / Qwen models, operate
-# Rico 2 or a MacBook, or send iMessage.
+# reboot, enable Time Machine on the overflow volume, move Littlebird / Hedy /
+# LM Studio app support / llmster / apps / working trees, touch Messages/chat.db
+# / Keychain / secrets, move Qwen models, operate Rico 2 or a MacBook, or send
+# iMessage.
 emulate -L zsh
 set -euo pipefail
 setopt nounset
@@ -17,12 +20,14 @@ setopt pipefail
 setopt extendedglob
 setopt typesetsilent
 
-typeset -r SCRIPT_VERSION="1.0.0"
+typeset -r SCRIPT_VERSION="1.1.0"
 typeset -r SCRIPT_PATH="${0:A}"
+typeset -r SCRIPT_DIR="${0:A:h}"
 typeset -r REQUIRED_LOCAL_HOST_NAME="Rico"
-typeset -r REQUIRED_VOLUME_NAME="Movie Drive"
-typeset -r PRODUCTION_MOVIE_DRIVE="/Volumes/Movie Drive"
-typeset -r OVERFLOW_ROOT_NAME="Rico-Overflow"
+typeset REQUIRED_VOLUME_NAME="Movie Drive"
+typeset OVERFLOW_ROOT_NAME="Rico-Overflow"
+typeset OVERFLOW_DEVICE_CLASS="hdd-sequential"
+typeset PRODUCTION_OVERFLOW_VOLUME="/Volumes/Movie Drive"
 
 typeset MODE="dry-run"
 typeset FIXTURE_MODE=0
@@ -34,7 +39,9 @@ typeset APPLY=0
 typeset AUDIT_ONLY=0
 
 typeset HOME_DIR=""
-typeset MOVIE_DRIVE=""
+typeset OVERFLOW_VOLUME=""
+typeset TEST_OVERFLOW_VOLUME=""
+typeset TEST_OVERFLOW_VOLUME_NAME=""
 typeset OVERFLOW_DAY=""
 typeset OVERFLOW_DIR=""
 typeset REPORT_DIR=""
@@ -62,7 +69,9 @@ Usage:
 
 Default is --dry-run. --apply performs only the safe actions in the README.
 Host-gates on scutil LocalHostName == Rico. Aborts on Rico 2 / MacBook.
-Never formats Movie Drive. Never moves Littlebird or Hedy.
+Keeps latency-sensitive data on the internal SSD. Overflow path lives in
+overflow-target.zsh (today Movie Drive; later a TB SSD is the same playbook).
+Never formats Movie Drive. Never moves Littlebird, Hedy, llmster, or apps.
 EOF
 }
 
@@ -87,23 +96,50 @@ is_truthy() {
   [[ "${1:-}" == 1 || "${1:-}" == true || "${1:-}" == yes ]]
 }
 
-# Fail closed: any Littlebird / ContextKit / Hedy path stays on internal disk.
+load_overflow_target() {
+  if [[ -f "${SCRIPT_DIR}/overflow-target.zsh" ]]; then
+    source "${SCRIPT_DIR}/overflow-target.zsh"
+  fi
+  REQUIRED_VOLUME_NAME="${RICO_OVERFLOW_VOLUME_NAME:-Movie Drive}"
+  OVERFLOW_ROOT_NAME="${RICO_OVERFLOW_ROOT_NAME:-Rico-Overflow}"
+  OVERFLOW_DEVICE_CLASS="${RICO_OVERFLOW_DEVICE_CLASS:-hdd-sequential}"
+  PRODUCTION_OVERFLOW_VOLUME="${RICO_OVERFLOW_VOLUME:-/Volumes/Movie Drive}"
+}
+
+# Fail closed: latency-sensitive and Alan-locked paths stay on the internal SSD.
 path_is_protected() {
   local raw="$1"
   local p
   p="$(lower "$raw")"
   [[ -z "$p" ]] && return 1
 
-  if [[ "$p" == *littlebird* || "$p" == *contextkit* || "$p" == *hedy* ]]; then
+  if [[ "$p" == *littlebird* || "$p" == *contextkit* || "$p" == *hedy* || "$p" == *llmster* ]]; then
+    return 0
+  fi
+  if [[ "$p" == *lmstudio* || "$p" == *"lm studio"* || "$p" == *qwen* ]]; then
+    return 0
+  fi
+  if [[ "$p" == /applications/* || "$p" == */applications/* || "$p" == *.app || "$p" == *.app/* ]]; then
+    return 0
+  fi
+  if [[ "$p" == *openclawstudio* || "$p" == */.openclaw || "$p" == */.openclaw/* || "$p" == *openclaw* ]]; then
+    return 0
+  fi
+  if [[ "$p" == */.cursor || "$p" == */.cursor/* || "$p" == *"/application support/cursor"* || "$p" == */library/caches/cursor* ]]; then
+    return 0
+  fi
+  if [[ "$p" == */.codex || "$p" == */.codex/* || "$p" == *"/application support/codex"* || "$p" == */documents/codex* ]]; then
+    return 0
+  fi
+  if [[ "$p" == */var/vm* || "$p" == *swapfile* || "$p" == *"/virtual machines"* ]]; then
     return 0
   fi
 
   case "$p" in
     */library/messages|*/library/messages/*|*/chat.db|*/chat.db-wal|*/chat.db-shm) return 0 ;;
     */library/keychains|*/library/keychains/*|*/.ssh|*/.ssh/*|*/.gnupg|*/.gnupg/*) return 0 ;;
-    */library/application\ support/littlebird|*/library/application\ support/littlebird/*) return 0 ;;
-    */library/application\ support/contextkit|*/library/application\ support/contextkit/*) return 0 ;;
-    */.lmstudio/models|*/.lmstudio/models/*|*qwen*.gguf|*lmstudio*models*) return 0 ;;
+    */library/application\ support/*) return 0 ;;
+    */.lmstudio|*/.lmstudio/*|*qwen*.gguf|*lmstudio*models*) return 0 ;;
     */secrets|*/secrets/*|*.pem|*.p12|*.key|*.token|*credentials.json) return 0 ;;
   esac
   return 1
@@ -112,13 +148,30 @@ path_is_protected() {
 path_looks_like_model() {
   local p
   p="$(lower "$1")"
-  [[ "$p" == *.gguf || "$p" == *.ggml || "$p" == *.safetensors || "$p" == *qwen* || "$p" == *lmstudio* ]]
+  [[ "$p" == *.gguf || "$p" == *.ggml || "$p" == *.safetensors || "$p" == *qwen* || "$p" == *lmstudio* || "$p" == *llmster* ]]
 }
 
 path_is_installer() {
   local p
   p="$(lower "$1")"
   [[ "$p" == *.dmg || "$p" == *.pkg || "$p" == *.iso ]]
+}
+
+path_is_oneshot_archive() {
+  local p
+  p="$(lower "$1")"
+  [[ "$p" == *.zip || "$p" == *.tar || "$p" == *.tgz || "$p" == *.tar.gz || "$p" == *.7z || "$p" == *.rar ]]
+}
+
+# Regenerable leftover installer dumps only. App launch caches stay on the SSD.
+is_leftover_installer_cache() {
+  local raw="$1"
+  local p base
+  p="$(lower "$raw")"
+  base="$(lower "${raw:t}")"
+  [[ "$base" == homebrew || "$p" == */homebrew || "$p" == */homebrew/* ]] && return 0
+  [[ "$p" == *.dmg || "$p" == *.pkg || "$p" == *.iso ]] && return 0
+  return 1
 }
 
 path_is_movie() {
@@ -175,7 +228,7 @@ safe_tmutil() {
       command tmutil "$verb" "$@"
       ;;
     *)
-      fail "refusing tmutil ${verb:-<empty>} (Time Machine onto Movie Drive stays off)"
+      fail "refusing tmutil ${verb:-<empty>} (Time Machine onto the overflow volume stays off)"
       ;;
   esac
 }
@@ -247,9 +300,9 @@ require_original_rico() {
   fi
 }
 
-movie_drive_volume_name() {
+overflow_volume_name() {
   if (( FIXTURE_MODE )); then
-    if [[ -d "$MOVIE_DRIVE" ]]; then
+    if [[ -d "$OVERFLOW_VOLUME" ]]; then
       print -r -- "$REQUIRED_VOLUME_NAME"
       return
     fi
@@ -257,28 +310,28 @@ movie_drive_volume_name() {
     return
   fi
   local info
-  info="$(safe_diskutil info "$MOVIE_DRIVE" 2>/dev/null || true)"
+  info="$(safe_diskutil info "$OVERFLOW_VOLUME" 2>/dev/null || true)"
   print -r -- "$info" | awk -F': *' '/Volume Name:/{print $2; exit}'
 }
 
-require_movie_drive_for_moves() {
-  [[ -d "$MOVIE_DRIVE" ]] || fail "Movie Drive is not mounted at ${MOVIE_DRIVE}. Plug in the 4TB G-DRIVE. Do not format it."
-  must_be_under "$MOVIE_DRIVE" "/Volumes" || {
+require_overflow_volume() {
+  [[ -d "$OVERFLOW_VOLUME" ]] || fail "Overflow volume is not mounted at ${OVERFLOW_VOLUME}. Attach the current overflow disk (today: 4TB G-DRIVE). Do not format it."
+  must_be_under "$OVERFLOW_VOLUME" "/Volumes" || {
     if (( ! FIXTURE_MODE )); then
-      fail "Movie Drive path must be under /Volumes"
+      fail "Overflow volume path must be under /Volumes"
     fi
   }
   local volume_name
-  volume_name="$(movie_drive_volume_name)"
+  volume_name="$(overflow_volume_name)"
   if [[ "$volume_name" != "$REQUIRED_VOLUME_NAME" ]]; then
     fail "refusing unexpected volume name '${volume_name}' (expected '${REQUIRED_VOLUME_NAME}'). Will not format or convert the disk."
   fi
-  if [[ -w "$MOVIE_DRIVE" ]]; then
+  if [[ -w "$OVERFLOW_VOLUME" ]]; then
     :
   else
-    fail "Movie Drive is not writable at ${MOVIE_DRIVE}"
+    fail "Overflow volume is not writable at ${OVERFLOW_VOLUME}"
   fi
-  log "Movie Drive OK: ${MOVIE_DRIVE} (HFS volume '${REQUIRED_VOLUME_NAME}'; will not erase/convert; Time Machine stays off)"
+  log "OVERFLOW ${OVERFLOW_VOLUME} name='${REQUIRED_VOLUME_NAME}' class=${OVERFLOW_DEVICE_CLASS} (edit overflow-target.zsh to point at a future USB4/TB SSD; Time Machine stays off)"
 }
 
 capture_df() {
@@ -313,24 +366,27 @@ append_audit_line() {
 audit_usual_hogs() {
   log "---- audit: usual hogs ----"
   append_audit_line "internal Data" "/System/Volumes/Data"
-  append_audit_line "Movie Drive" "$MOVIE_DRIVE"
+  append_audit_line "overflow volume" "$OVERFLOW_VOLUME"
   append_audit_line "home" "$HOME_DIR"
-  append_audit_line "Caches" "$HOME_DIR/Library/Caches"
+  append_audit_line "Caches (launch caches stay)" "$HOME_DIR/Library/Caches"
   append_audit_line "Logs" "$HOME_DIR/Library/Logs"
   append_audit_line "Downloads" "$HOME_DIR/Downloads"
   append_audit_line "Desktop" "$HOME_DIR/Desktop"
-  append_audit_line "Documents (Alan OK to move)" "$HOME_DIR/Documents"
-  append_audit_line "Movies (Alan OK to move)" "$HOME_DIR/Movies"
+  append_audit_line "Documents (cold only + Alan OK)" "$HOME_DIR/Documents"
+  append_audit_line "Movies (cold only + Alan OK)" "$HOME_DIR/Movies"
   append_audit_line "Google Drive (Alan OK)" "$HOME_DIR/Library/CloudStorage"
-  append_audit_line "LM Studio home (models stay)" "$HOME_DIR/.lmstudio"
-  append_audit_line "LM Studio app support (models stay)" "$HOME_DIR/Library/Application Support/LM Studio"
+  append_audit_line "LM Studio home (SSD)" "$HOME_DIR/.lmstudio"
+  append_audit_line "LM Studio app support (SSD)" "$HOME_DIR/Library/Application Support/LM Studio"
+  append_audit_line "llmster (SSD)" "$HOME_DIR/Library/Application Support/llmster"
+  append_audit_line "OpenClawStudio (SSD)" "$HOME_DIR/OpenClawStudio"
+  append_audit_line "Cursor support (SSD)" "$HOME_DIR/Library/Application Support/Cursor"
   append_audit_line "Messages (do not touch)" "$HOME_DIR/Library/Messages"
   append_audit_line "Keychains (do not touch)" "$HOME_DIR/Library/Keychains"
-  append_audit_line "Littlebird app (stay)" "/Applications/Littlebird.app"
-  append_audit_line "Littlebird support (stay)" "$HOME_DIR/Library/Application Support/Littlebird"
-  append_audit_line "ContextKit (stay)" "$HOME_DIR/Library/Application Support/ContextKit"
-  append_audit_line "Hedy app (stay)" "/Applications/Hedy.app"
-  append_audit_line "Hedy support (stay)" "$HOME_DIR/Library/Application Support/Hedy"
+  append_audit_line "Littlebird app (SSD)" "/Applications/Littlebird.app"
+  append_audit_line "Littlebird support (SSD)" "$HOME_DIR/Library/Application Support/Littlebird"
+  append_audit_line "ContextKit (SSD)" "$HOME_DIR/Library/Application Support/ContextKit"
+  append_audit_line "Hedy app (SSD)" "/Applications/Hedy.app"
+  append_audit_line "Hedy support (SSD)" "$HOME_DIR/Library/Application Support/Hedy"
 
   if [[ -d "$HOME_DIR/Library/Caches" ]]; then
     log "AUDIT  top cache dirs:"
@@ -346,9 +402,17 @@ audit_usual_hogs() {
     for item in "$HOME_DIR/Downloads"/*.(#i)(dmg|pkg|iso)(N.); do
       size="$(du_size "$item")"
       if path_is_protected "$item"; then
-        log "AUDIT    ${size:-?}  ${item}  [PROTECTED skip]"
+        log "AUDIT    ${size:-?}  ${item}  [PROTECTED skip — stay on SSD]"
       else
-        log "AUDIT    ${size:-?}  ${item}  [safe to overflow]"
+        log "AUDIT    ${size:-?}  ${item}  [HDD overflow OK]"
+      fi
+    done
+    for item in "$HOME_DIR/Downloads"/*.(#i)(zip|tar|tgz|7z|rar)(N.) "$HOME_DIR/Downloads"/*.tar.gz(N.); do
+      size="$(du_size "$item")"
+      if path_is_protected "$item" || path_looks_like_model "$item"; then
+        log "AUDIT    ${size:-?}  ${item}  [PROTECTED skip — stay on SSD]"
+      else
+        log "AUDIT    ${size:-?}  ${item}  [one-shot archive; HDD overflow OK]"
       fi
     done
   fi
@@ -360,23 +424,24 @@ skip_protected() {
   log "SKIP   ${target}  (${reason})"
 }
 
-clear_cache_tree() {
+clear_leftover_installer_caches() {
   local root="$1"
   [[ -d "$root" ]] || return 0
   must_be_under "$root" "$HOME_DIR/Library/Caches" || fail "refusing to clear cache outside ~/Library/Caches: $root"
 
+  log "---- leftover installer caches only (launch caches stay on SSD) ----"
   local child
   for child in "$root"/*(N); do
     if path_is_protected "$child"; then
-      skip_protected "$child" "Littlebird/Hedy/ContextKit or other protected cache"
+      skip_protected "$child" "protected / latency-sensitive cache stays on SSD"
       continue
     fi
-    if [[ -e "$child" && ("$(lower "$child")" == *model* || "$(lower "$child")" == *gguf* || "$(lower "$child")" == *qwen*) ]]; then
-      skip_protected "$child" "possible model cache — leave on internal disk"
+    if ! is_leftover_installer_cache "$child"; then
+      log "KEEP   ${child}  (active/unknown cache — snappy launch, stay on SSD)"
       continue
     fi
     if (( ! APPLY )); then
-      log "WOULD  clear cache  ${child}"
+      log "WOULD  clear leftover installer cache  ${child}"
       continue
     fi
     rm -rf -- "$child"
@@ -420,16 +485,16 @@ thin_local_tm_snapshots() {
 
 ensure_overflow_dir() {
   OVERFLOW_DAY="$(TZ=America/New_York date +%F)"
-  OVERFLOW_DIR="${MOVIE_DRIVE}/${OVERFLOW_ROOT_NAME}/${OVERFLOW_DAY}"
+  OVERFLOW_DIR="${OVERFLOW_VOLUME}/${OVERFLOW_ROOT_NAME}/${OVERFLOW_DAY}"
   if (( APPLY )); then
-    require_movie_drive_for_moves
-    mkdir -p -- "$OVERFLOW_DIR/installers" "$OVERFLOW_DIR/reports"
+    require_overflow_volume
+    mkdir -p -- "$OVERFLOW_DIR/installers" "$OVERFLOW_DIR/archives" "$OVERFLOW_DIR/reports"
     [[ -d "$OVERFLOW_DIR/installers" ]] || fail "failed to create overflow ${OVERFLOW_DIR}"
   else
-    if [[ -d "$MOVIE_DRIVE" ]]; then
+    if [[ -d "$OVERFLOW_VOLUME" ]]; then
       log "WOULD  mkdir ${OVERFLOW_DIR}/installers"
     else
-      log "WARN   Movie Drive not mounted; overflow moves will be skipped until it is"
+      log "WARN   overflow volume not mounted at ${OVERFLOW_VOLUME}; installer moves will be skipped"
     fi
   fi
 }
@@ -452,35 +517,52 @@ move_installer() {
     return 0
   fi
   if path_is_movie "$src"; then
-    skip_protected "$src" "movie file — Alan OK required; never overwrite Movie Drive library"
+    skip_protected "$src" "movie file — Alan OK required; never overwrite the existing movie library"
     return 0
   fi
   if ! path_is_installer "$src"; then
     return 0
   fi
 
-  local dest="${OVERFLOW_DIR}/installers/${src:t}"
+  move_installer_to "$src" "${OVERFLOW_DIR}/installers/${src:t}"
+}
+
+move_oneshot_archive() {
+  local src="$1"
+  if [[ ! -f "$src" || -L "$src" ]]; then
+    return 0
+  fi
+  if path_is_protected "$src" || path_looks_like_model "$src" || path_is_movie "$src"; then
+    skip_protected "$src" "protected / latency-sensitive / media — stay on SSD unless Alan OK"
+    return 0
+  fi
+  if ! path_is_oneshot_archive "$src"; then
+    return 0
+  fi
+  move_installer_to "$src" "${OVERFLOW_DIR}/archives/${src:t}"
+}
+
+move_installer_to() {
+  local src="$1" dest="$2"
   if [[ -e "$dest" ]]; then
     if [[ "$(file_sha256 "$src")" == "$(file_sha256 "$dest")" ]]; then
       if (( APPLY )); then
         rm -f -- "$src"
         MOVED_COUNT=$((MOVED_COUNT + 1))
-        log "IDEMP  already on Movie Drive, removed internal copy  ${src}"
+        log "IDEMP  already on overflow volume, removed internal copy  ${src}"
       else
-        log "WOULD  remove already-copied installer  ${src}"
+        log "WOULD  remove already-copied leftover  ${src}"
       fi
       return 0
     fi
     fail "refusing to overwrite existing overflow file with different contents: $dest"
   fi
-
   if (( ! APPLY )); then
     log "WOULD  copy-verify-remove  ${src}  ->  ${dest}"
     return 0
   fi
-
-  require_movie_drive_for_moves
-  must_be_under "$dest" "${MOVIE_DRIVE}/${OVERFLOW_ROOT_NAME}" || fail "overflow dest escaped Rico-Overflow: $dest"
+  require_overflow_volume
+  must_be_under "$dest" "${OVERFLOW_VOLUME}/${OVERFLOW_ROOT_NAME}" || fail "overflow dest escaped Rico-Overflow: $dest"
   mkdir -p -- "${dest:h}"
   local tmp="${dest}.partial.${RANDOM}"
   copy_file "$src" "$tmp"
@@ -492,11 +574,8 @@ move_installer() {
     fail "checksum mismatch after copy, source kept: $src"
   fi
   mv -n -- "$tmp" "$dest"
-  if [[ ! -f "$dest" ]]; then
-    fail "move into place failed, source kept: $src"
-  fi
-  if [[ "$(file_sha256 "$dest")" != "$src_hash" ]]; then
-    fail "post-rename checksum mismatch, source kept: $src"
+  if [[ ! -f "$dest" ]] || [[ "$(file_sha256 "$dest")" != "$src_hash" ]]; then
+    fail "verified place failed, source kept: $src"
   fi
   rm -f -- "$src"
   if [[ -e "$src" ]]; then
@@ -507,12 +586,15 @@ move_installer() {
 }
 
 move_safe_installers() {
-  log "---- overflow installers (copy-verify-remove) ----"
+  log "---- overflow sequential leftovers (copy-verify-remove) ----"
   local search_root item
   for search_root in "$HOME_DIR/Downloads" "$HOME_DIR/Desktop"; do
     [[ -d "$search_root" ]] || continue
     for item in "$search_root"/*.(#i)(dmg|pkg|iso)(N.); do
       move_installer "$item"
+    done
+    for item in "$search_root"/*.(#i)(zip|tar|tgz|7z|rar)(N.) "$search_root"/*.tar.gz(N.); do
+      move_oneshot_archive "$item"
     done
   done
 }
@@ -533,19 +615,20 @@ write_report() {
     print -r -- ""
     print -r -- "==== df /System/Volumes/Data BEFORE ===="
     print -r -- "$DF_BEFORE_DATA"
-    print -r -- "==== df Movie Drive BEFORE ===="
+    print -r -- "==== df overflow volume BEFORE (${OVERFLOW_VOLUME}) ===="
     print -r -- "$DF_BEFORE_MOVIE"
     print -r -- ""
     print -l -- "${REPORT_LINES[@]}"
     print -r -- ""
     print -r -- "==== df /System/Volumes/Data AFTER ===="
     print -r -- "$DF_AFTER_DATA"
-    print -r -- "==== df Movie Drive AFTER ===="
+    print -r -- "==== df overflow volume AFTER (${OVERFLOW_VOLUME}) ===="
     print -r -- "$DF_AFTER_MOVIE"
     print -r -- ""
     print -r -- "moved=${MOVED_COUNT} cleared_cache_entries=${CLEARED_COUNT} skipped_protected=${SKIPPED_PROTECTED} errors=${ERROR_COUNT}"
-    print -r -- "SIP was not changed. Host was not rebooted. Movie Drive was not formatted. Time Machine destination was not added."
-    print -r -- "Littlebird and Hedy were not moved."
+    print -r -- "overflow_target=${OVERFLOW_VOLUME} class=${OVERFLOW_DEVICE_CLASS} (edit overflow-target.zsh to swap to a USB4/TB SSD)"
+    print -r -- "SIP was not changed. Host was not rebooted. Overflow volume was not formatted. Time Machine destination was not added."
+    print -r -- "Littlebird, Hedy, llmster, LM Studio/Qwen, apps, Messages, and working trees stayed on the internal SSD."
   } >"$REPORT_PATH"
   chmod 600 "$REPORT_PATH" 2>/dev/null || true
   if (( APPLY )) && [[ -d "${OVERFLOW_DIR}/reports" ]]; then
@@ -571,23 +654,31 @@ acquire_lock() {
 }
 
 run_cleanup() {
+  load_overflow_target
   HOME_DIR="${HOME}"
-  MOVIE_DRIVE="$PRODUCTION_MOVIE_DRIVE"
+  OVERFLOW_VOLUME="$PRODUCTION_OVERFLOW_VOLUME"
   if (( FIXTURE_MODE )); then
     HOME_DIR="${FIXTURE_ROOT}/Users/alan"
-    MOVIE_DRIVE="${FIXTURE_ROOT}/Volumes/Movie Drive"
+    if [[ -n "$TEST_OVERFLOW_VOLUME" ]]; then
+      OVERFLOW_VOLUME="$TEST_OVERFLOW_VOLUME"
+      REQUIRED_VOLUME_NAME="${TEST_OVERFLOW_VOLUME_NAME:-$REQUIRED_VOLUME_NAME}"
+    else
+      OVERFLOW_VOLUME="${FIXTURE_ROOT}/Volumes/Movie Drive"
+    fi
     export HOME="$HOME_DIR"
   fi
 
   acquire_lock
   require_original_rico
+  log "POLICY keep latency-sensitive data on internal SSD; overflow sequential leftovers only"
+  log "POLICY overflow-target ${OVERFLOW_VOLUME} class=${OVERFLOW_DEVICE_CLASS}"
 
   if (( ! FIXTURE_MODE )); then
     if command -v csrutil >/dev/null 2>&1; then
       log "SIP    $(csrutil status 2>/dev/null | tr '\n' ' ')"
     fi
     if command -v tmutil >/dev/null 2>&1; then
-      log "TM     destinationinfo (Movie Drive must NOT be added):"
+      log "TM     destinationinfo (overflow volume must NOT be a Time Machine disk):"
       safe_tmutil destinationinfo 2>/dev/null | while IFS= read -r line; do
         log "TM       $line"
       done
@@ -595,7 +686,7 @@ run_cleanup() {
   fi
 
   DF_BEFORE_DATA="$(capture_df /System/Volumes/Data)"
-  DF_BEFORE_MOVIE="$(capture_df "$MOVIE_DRIVE")"
+  DF_BEFORE_MOVIE="$(capture_df "$OVERFLOW_VOLUME")"
   log "---- df BEFORE ----"
   log "$DF_BEFORE_DATA"
   log "$DF_BEFORE_MOVIE"
@@ -603,22 +694,22 @@ run_cleanup() {
   audit_usual_hogs
   if (( AUDIT_ONLY )); then
     DF_AFTER_DATA="$(capture_df /System/Volumes/Data)"
-    DF_AFTER_MOVIE="$(capture_df "$MOVIE_DRIVE")"
+    DF_AFTER_MOVIE="$(capture_df "$OVERFLOW_VOLUME")"
     write_report
     return
   fi
 
   ensure_overflow_dir
-  clear_cache_tree "$HOME_DIR/Library/Caches"
+  clear_leftover_installer_caches "$HOME_DIR/Library/Caches"
   thin_local_tm_snapshots
-  if [[ -d "$MOVIE_DRIVE" ]]; then
+  if [[ -d "$OVERFLOW_VOLUME" ]]; then
     move_safe_installers
   else
-    log "SKIP   installer overflow (Movie Drive not mounted)"
+    log "SKIP   installer overflow (volume not mounted at ${OVERFLOW_VOLUME})"
   fi
 
   DF_AFTER_DATA="$(capture_df /System/Volumes/Data)"
-  DF_AFTER_MOVIE="$(capture_df "$MOVIE_DRIVE")"
+  DF_AFTER_MOVIE="$(capture_df "$OVERFLOW_VOLUME")"
   log "---- df AFTER ----"
   log "$DF_AFTER_DATA"
   log "$DF_AFTER_MOVIE"
@@ -626,7 +717,7 @@ run_cleanup() {
 
   log "DONE   mode=${MODE} moved=${MOVED_COUNT} cleared=${CLEARED_COUNT} skipped_protected=${SKIPPED_PROTECTED}"
   log "DONE   report=${REPORT_PATH}"
-  log "DONE   confirm with: df -h /System/Volumes/Data && df -h \"/Volumes/Movie Drive\""
+  log "DONE   confirm with: df -h /System/Volumes/Data && df -h \"${OVERFLOW_VOLUME}\""
   release_lock
 }
 
@@ -662,11 +753,22 @@ run_self_test() {
   path_is_protected "/Users/alan/Library/Messages/chat.db" || { print -u2 "FAIL chat.db"; exit 1; }
   path_is_protected "/Users/alan/Downloads/Hedy-Installer.dmg" || { print -u2 "FAIL Hedy installer name"; exit 1; }
   path_is_protected "/Users/alan/Downloads/Littlebird.pkg" || { print -u2 "FAIL Littlebird installer name"; exit 1; }
+  path_is_protected "/Users/alan/Library/Application Support/LM Studio/models/qwen.gguf" || { print -u2 "FAIL LM Studio support"; exit 1; }
+  path_is_protected "/Users/alan/Library/Application Support/llmster/store" || { print -u2 "FAIL llmster"; exit 1; }
+  path_is_protected "/Users/alan/OpenClawStudio/RicoIMessageMCP" || { print -u2 "FAIL OpenClawStudio tree"; exit 1; }
+  path_is_protected "/Users/alan/Library/Application Support/Cursor/Cache" || { print -u2 "FAIL Cursor support"; exit 1; }
+  path_is_protected "/Applications/Safari.app" || { print -u2 "FAIL /Applications stay"; exit 1; }
+  path_is_protected "/private/var/vm/swapfile0" || { print -u2 "FAIL swap"; exit 1; }
   path_is_protected "/Users/alan/Downloads/Chrome.dmg" && { print -u2 "FAIL Chrome.dmg should not be protected"; exit 1; }
+  path_is_protected "/Users/alan/Downloads/old-archive.zip" && { print -u2 "FAIL zip should be overflow-eligible"; exit 1; }
+  is_leftover_installer_cache "/Users/alan/Library/Caches/Homebrew" || { print -u2 "FAIL Homebrew leftover cache"; exit 1; }
+  is_leftover_installer_cache "/Users/alan/Library/Caches/com.apple.Safari" && { print -u2 "FAIL Safari is not leftover installer cache"; exit 1; }
   print -r -- "PASS  host-gate and skip-rule predicates"
 
   mkdir -p -- \
     "${tmp}/Users/alan/Library/Caches/com.apple.Safari" \
+    "${tmp}/Users/alan/Library/Caches/Homebrew" \
+    "${tmp}/Users/alan/Library/Caches/Cursor" \
     "${tmp}/Users/alan/Library/Caches/Littlebird" \
     "${tmp}/Users/alan/Library/Caches/Hedy" \
     "${tmp}/Users/alan/Library/Caches/ContextKit" \
@@ -674,16 +776,22 @@ run_self_test() {
     "${tmp}/Users/alan/Library/Application Support/Hedy/models" \
     "${tmp}/Users/alan/Library/Application Support/ContextKit" \
     "${tmp}/Users/alan/Library/Application Support/LM Studio/models" \
+    "${tmp}/Users/alan/Library/Application Support/llmster" \
+    "${tmp}/Users/alan/Library/Application Support/Cursor" \
     "${tmp}/Users/alan/Library/Messages" \
     "${tmp}/Users/alan/Library/Keychains" \
     "${tmp}/Users/alan/Library/Logs/rico-disk-cleanup" \
     "${tmp}/Users/alan/Downloads" \
     "${tmp}/Users/alan/Desktop" \
     "${tmp}/Users/alan/.lmstudio/models" \
+    "${tmp}/Users/alan/OpenClawStudio/RicoIMessageMCP" \
     "${tmp}/Volumes/Movie Drive/Movies From 2021" \
+    "${tmp}/Volumes/Rico-Overflow-SSD" \
     "${tmp}/Applications/Littlebird.app/Contents"
 
   print -r -- "safari-cache" >"${tmp}/Users/alan/Library/Caches/com.apple.Safari/cache.db"
+  print -r -- "brew-bottle" >"${tmp}/Users/alan/Library/Caches/Homebrew/foo.bottle"
+  print -r -- "cursor-cache" >"${tmp}/Users/alan/Library/Caches/Cursor/gpu-cache"
   print -r -- "littlebird-cache" >"${tmp}/Users/alan/Library/Caches/Littlebird/keep.me"
   print -r -- "hedy-cache" >"${tmp}/Users/alan/Library/Caches/Hedy/keep.me"
   print -r -- "contextkit-cache" >"${tmp}/Users/alan/Library/Caches/ContextKit/keep.me"
@@ -691,9 +799,13 @@ run_self_test() {
   print -r -- "hedy-model" >"${tmp}/Users/alan/Library/Application Support/Hedy/models/weights.bin"
   print -r -- "context-data" >"${tmp}/Users/alan/Library/Application Support/ContextKit/index"
   print -r -- "qwen-model" >"${tmp}/Users/alan/.lmstudio/models/qwen3.gguf"
+  print -r -- "llmster-state" >"${tmp}/Users/alan/Library/Application Support/llmster/store"
+  print -r -- "cursor-ws" >"${tmp}/Users/alan/Library/Application Support/Cursor/workspace.json"
+  print -r -- "openclaw-tree" >"${tmp}/Users/alan/OpenClawStudio/RicoIMessageMCP/index.mjs"
   print -r -- "chat-secret" >"${tmp}/Users/alan/Library/Messages/chat.db"
   print -r -- "keychain-secret" >"${tmp}/Users/alan/Library/Keychains/login.keychain-db"
   print -r -- "installer-body" >"${tmp}/Users/alan/Downloads/Xcode-old.dmg"
+  print -r -- "oneshot-zip" >"${tmp}/Users/alan/Downloads/old-archive.zip"
   print -r -- "hedy-installer" >"${tmp}/Users/alan/Downloads/Hedy-Installer.dmg"
   print -r -- "littlebird-pkg" >"${tmp}/Users/alan/Downloads/Littlebird.pkg"
   print -r -- "a-movie" >"${tmp}/Users/alan/Downloads/Family-Video.mp4"
@@ -734,24 +846,29 @@ run_self_test() {
   REPORT_LINES=()
   run_cleanup
 
-  local overflow_dmg
+  local overflow_dmg overflow_zip overflow_hedy overflow_littlebird
   overflow_dmg="$(print -r -- "${tmp}/Volumes/Movie Drive/${OVERFLOW_ROOT_NAME}"/*/installers/Xcode-old.dmg(N[1]))"
-  local overflow_hedy
+  overflow_zip="$(print -r -- "${tmp}/Volumes/Movie Drive/${OVERFLOW_ROOT_NAME}"/*/archives/old-archive.zip(N[1]))"
   overflow_hedy="$(print -r -- "${tmp}/Volumes/Movie Drive/${OVERFLOW_ROOT_NAME}"/*/installers/Hedy-Installer.dmg(N[1]))"
-  local overflow_littlebird
   overflow_littlebird="$(print -r -- "${tmp}/Volumes/Movie Drive/${OVERFLOW_ROOT_NAME}"/*/installers/Littlebird.pkg(N[1]))"
 
-  assert_self_test "Safari cache cleared" "[[ ! -e '${tmp}/Users/alan/Library/Caches/com.apple.Safari/cache.db' ]]"
+  assert_self_test "Safari launch cache stays on SSD" "[[ -e '${tmp}/Users/alan/Library/Caches/com.apple.Safari/cache.db' ]]"
+  assert_self_test "Cursor cache stays on SSD" "[[ -e '${tmp}/Users/alan/Library/Caches/Cursor/gpu-cache' ]]"
+  assert_self_test "Homebrew leftover cache cleared" "[[ ! -e '${tmp}/Users/alan/Library/Caches/Homebrew/foo.bottle' ]]"
   assert_self_test "Littlebird cache stays" "[[ -e '${tmp}/Users/alan/Library/Caches/Littlebird/keep.me' ]]"
   assert_self_test "Hedy cache stays" "[[ -e '${tmp}/Users/alan/Library/Caches/Hedy/keep.me' ]]"
   assert_self_test "ContextKit cache stays" "[[ -e '${tmp}/Users/alan/Library/Caches/ContextKit/keep.me' ]]"
   assert_self_test "Littlebird support stays" "[[ -e '${tmp}/Users/alan/Library/Application Support/Littlebird/state.db' ]]"
   assert_self_test "Hedy model stays" "[[ -e '${tmp}/Users/alan/Library/Application Support/Hedy/models/weights.bin' ]]"
   assert_self_test "LM Studio model stays" "[[ -e '${tmp}/Users/alan/.lmstudio/models/qwen3.gguf' ]]"
+  assert_self_test "llmster stays" "[[ -e '${tmp}/Users/alan/Library/Application Support/llmster/store' ]]"
+  assert_self_test "Cursor support stays" "[[ -e '${tmp}/Users/alan/Library/Application Support/Cursor/workspace.json' ]]"
+  assert_self_test "OpenClawStudio tree stays" "[[ -e '${tmp}/Users/alan/OpenClawStudio/RicoIMessageMCP/index.mjs' ]]"
   assert_self_test "chat.db stays" "[[ -e '${tmp}/Users/alan/Library/Messages/chat.db' ]]"
   assert_self_test "keychain stays" "[[ -e '${tmp}/Users/alan/Library/Keychains/login.keychain-db' ]]"
   assert_self_test "existing movie untouched" "[[ -e '${tmp}/Volumes/Movie Drive/Movies From 2021/keep.mov' ]]"
   assert_self_test "safe dmg overflowed" "[[ -f '$overflow_dmg' ]]"
+  assert_self_test "one-shot zip overflowed" "[[ -f '$overflow_zip' ]]"
   assert_self_test "safe dmg removed from Downloads" "[[ ! -e '${tmp}/Users/alan/Downloads/Xcode-old.dmg' ]]"
   assert_self_test "Hedy installer not overflowed" "[[ -e '${tmp}/Users/alan/Downloads/Hedy-Installer.dmg' && -z '$overflow_hedy' ]]"
   assert_self_test "Littlebird pkg not overflowed" "[[ -e '${tmp}/Users/alan/Downloads/Littlebird.pkg' && -z '$overflow_littlebird' ]]"
@@ -769,6 +886,22 @@ run_self_test() {
   assert_self_test "idempotent: movie still present" "[[ -e '${tmp}/Volumes/Movie Drive/Movies From 2021/keep.mov' ]]"
   assert_self_test "idempotent: Hedy still present" "[[ -e '${tmp}/Users/alan/Library/Application Support/Hedy/models/weights.bin' ]]"
   assert_self_test "idempotent: overflow dmg still one copy" "[[ -f '$overflow_dmg' ]]"
+
+  # Path change only: point overflow at a stand-in USB4/TB SSD volume.
+  print -r -- "ssd-installer" >"${tmp}/Users/alan/Desktop/OldTools.dmg"
+  TEST_OVERFLOW_VOLUME="${tmp}/Volumes/Rico-Overflow-SSD"
+  TEST_OVERFLOW_VOLUME_NAME="Rico-Overflow-SSD"
+  OVERFLOW_DEVICE_CLASS="ssd-random"
+  MOVED_COUNT=0
+  CLEARED_COUNT=0
+  SKIPPED_PROTECTED=0
+  REPORT_LINES=()
+  run_cleanup
+  local ssd_dmg
+  ssd_dmg="$(print -r -- "${tmp}/Volumes/Rico-Overflow-SSD/${OVERFLOW_ROOT_NAME}"/*/installers/OldTools.dmg(N[1]))"
+  assert_self_test "SSD path swap overflowed installer" "[[ -f '$ssd_dmg' ]]"
+  assert_self_test "SSD path swap did not rewrite Movie Drive library" "[[ -e '${tmp}/Volumes/Movie Drive/Movies From 2021/keep.mov' ]]"
+  assert_self_test "SSD path swap left llmster on SSD home" "[[ -e '${tmp}/Users/alan/Library/Application Support/llmster/store' ]]"
 
   rm -rf -- "$tmp"
   print -r -- "PASS  all rico-disk-cleanup self-tests"
