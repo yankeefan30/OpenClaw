@@ -82,7 +82,8 @@ sudo cp ops/hedy-launch/linux/allow-hedy-chrome.json \
 ```
 
 That allowlists Hedy hosts for popups, mic/camera capture, notifications, and
-Safe Browsing. It does not weaken Chrome for other sites.
+Safe Browsing. It does not set `URLAllowlist` (that would block every other
+site) and does not weaken Chrome for unrelated hosts.
 
 ## What this kit will not do
 

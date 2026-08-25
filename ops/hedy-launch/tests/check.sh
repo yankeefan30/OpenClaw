@@ -40,8 +40,10 @@ else
 fi
 
 if grep -q '"DefaultPopupsSetting": 1' "$POLICY" \
+  && grep -q 'SafeBrowsingAllowlistDomains' "$POLICY" \
   && grep -q 'hedy.ai' "$POLICY" \
-  && grep -q 'hedy.bot' "$POLICY"; then
+  && grep -q 'hedy.bot' "$POLICY" \
+  && ! grep -q 'URLAllowlist' "$POLICY"; then
   pass "chrome policy allowlists Hedy hosts"
 else
   fail "chrome policy allowlists Hedy hosts"

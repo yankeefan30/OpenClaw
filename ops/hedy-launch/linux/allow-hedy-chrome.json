@@ -9,14 +9,6 @@
   "DefaultPopupsSetting": 1,
   "DownloadRestrictions": 0,
   "SafeBrowsingAllowlistDomains": ["hedy.ai", "hedy.bot", "web.hedy.ai"],
-  "URLAllowlist": [
-    "hedy.ai",
-    "[*.]hedy.ai",
-    "hedy.bot",
-    "[*.]hedy.bot",
-    "accounts.google.com",
-    "oauth2.googleapis.com"
-  ],
   "VideoCaptureAllowedUrls": [
     "https://[*.]hedy.ai/",
     "https://[*.]hedy.bot/"
