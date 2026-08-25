@@ -1,0 +1,24 @@
+{
+  "AudioCaptureAllowedUrls": [
+    "https://[*.]hedy.ai/",
+    "https://[*.]hedy.bot/",
+    "http://127.0.0.1:*",
+    "http://localhost:*"
+  ],
+  "DefaultNotificationsSetting": 1,
+  "DefaultPopupsSetting": 1,
+  "DownloadRestrictions": 0,
+  "SafeBrowsingAllowlistDomains": ["hedy.ai", "hedy.bot", "web.hedy.ai"],
+  "URLAllowlist": [
+    "hedy.ai",
+    "[*.]hedy.ai",
+    "hedy.bot",
+    "[*.]hedy.bot",
+    "accounts.google.com",
+    "oauth2.googleapis.com"
+  ],
+  "VideoCaptureAllowedUrls": [
+    "https://[*.]hedy.ai/",
+    "https://[*.]hedy.bot/"
+  ]
+}
