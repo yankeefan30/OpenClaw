@@ -1,0 +1,4 @@
+{
+  "name": "OpenClaw Studio (Node workspaces)",
+  "install": "bash scripts/cloud-agent-install.sh"
+}
