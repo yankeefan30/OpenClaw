@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/readiness-report.schema.json",
+  "title": "The Artist connector readiness report",
+  "type": "object",
+  "required": ["artist_readiness_report"],
+  "properties": {
+    "artist_readiness_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overall_status", "claude", "google_drive", "google_slides", "required_user_actions", "safe_to_activate"],
+      "properties": {
+        "overall_status": { "enum": ["ready", "partially_ready", "blocked"] },
+        "claude": {
+          "type": "object",
+          "required": ["status", "model", "capabilities", "remediation"],
+          "properties": {
+            "status": { "type": "string" },
+            "model": { "type": "string" },
+            "capabilities": { "type": "array", "items": { "type": "string" } },
+            "remediation": { "type": "string" }
+          }
+        },
+        "google_drive": {
+          "type": "object",
+          "required": ["status", "account", "template_location", "output_location", "capabilities", "remediation"],
+          "properties": {
+            "status": { "type": "string" },
+            "account": { "type": "string" },
+            "template_location": { "type": "string" },
+            "output_location": { "type": "string" },
+            "capabilities": { "type": "array", "items": { "type": "string" } },
+            "remediation": { "type": "string" }
+          }
+        },
+        "google_slides": {
+          "type": "object",
+          "required": ["status", "capabilities", "remediation"],
+          "properties": {
+            "status": { "type": "string" },
+            "capabilities": { "type": "array", "items": { "type": "string" } },
+            "remediation": { "type": "string" }
+          }
+        },
+        "required_user_actions": { "type": "array", "items": { "type": "string" } },
+        "safe_to_activate": { "type": "boolean" }
+      }
+    }
+  }
+}

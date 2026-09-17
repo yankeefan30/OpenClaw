@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/output-package.schema.json",
+  "title": "The Artist output package",
+  "type": "object",
+  "required": ["artist_output_package"],
+  "properties": {
+    "artist_output_package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deck_title", "deck_status", "google_slides_url", "google_slides_file_id",
+        "pptx_file_id", "pdf_file_id", "json_spec_file_id", "quality_review_file_id",
+        "template_used", "rendering_mode", "slide_count", "board_readiness_score",
+        "assumptions", "open_questions", "source_register_file_id", "audit_record_id"
+      ],
+      "properties": {
+        "deck_title": { "type": "string" },
+        "deck_status": { "enum": ["draft", "rendered", "exported", "blocked", "rendering_pending"] },
+        "google_slides_url": { "type": "string" },
+        "google_slides_file_id": { "type": "string" },
+        "pptx_file_id": { "type": "string" },
+        "pdf_file_id": { "type": "string" },
+        "json_spec_file_id": { "type": "string" },
+        "quality_review_file_id": { "type": "string" },
+        "template_used": { "type": "string" },
+        "rendering_mode": { "enum": ["template", "bespoke", "dry_run"] },
+        "slide_count": { "type": "integer", "minimum": 0 },
+        "board_readiness_score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "open_questions": { "type": "array", "items": { "type": "string" } },
+        "source_register_file_id": { "type": "string" },
+        "audit_record_id": { "type": "string" }
+      }
+    }
+  }
+}
