@@ -52,8 +52,8 @@ output package (draft)
 
 ## Rendering branches
 
-- **Template-driven:** copy from `01_Templates/`, populate, never edit the original.
-- **Bespoke:** new Slides deck with the premium default or user brand.
+- **Template-driven (mandatory):** copy `CVS-Health-2025-Enterprise-Template.pptx`, populate official layouts, never edit the original.
+- **Bespoke:** disabled. The Artist does not create a substitute theme.
 
 If Slides is down: dry-run only (`rendering_pending`). Gamma PPTX is an optional confirmed fallback, not a silent substitute.
 

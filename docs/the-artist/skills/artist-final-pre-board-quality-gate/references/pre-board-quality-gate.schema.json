@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/pre-board-quality-gate.schema.json",
+  "title": "The Artist Final Pre-Board Quality Gate report",
+  "type": "object",
+  "required": ["pre_board_quality_gate"],
+  "properties": {
+    "pre_board_quality_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "overall_score_out_of_10",
+        "board_readiness_score_out_of_10",
+        "executive_summary_score_out_of_10",
+        "narrative_score_out_of_10",
+        "visual_quality_score_out_of_10",
+        "quantitative_rigor_score_out_of_10",
+        "decision_clarity_score_out_of_10",
+        "source_integrity_score_out_of_10",
+        "top_strengths",
+        "material_issues",
+        "unsupported_claims",
+        "missing_evidence",
+        "required_story_changes",
+        "required_design_changes",
+        "required_data_changes",
+        "slides_to_delete",
+        "slides_to_merge",
+        "slides_to_move_to_appendix",
+        "slides_to_add",
+        "slides_rewritten",
+        "executive_summary_rebuilt",
+        "final_decision_readiness",
+        "unresolved_questions",
+        "approval_rationale"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "approved",
+            "approved_with_minor_revisions",
+            "revision_required",
+            "blocked_by_missing_evidence",
+            "requires_human_executive_review"
+          ]
+        },
+        "overall_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "board_readiness_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "executive_summary_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "narrative_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "visual_quality_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "quantitative_rigor_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "decision_clarity_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "source_integrity_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "top_strengths": { "type": "array", "items": { "type": "string" } },
+        "material_issues": { "type": "array", "items": { "type": "string" } },
+        "unsupported_claims": { "type": "array", "items": { "type": "string" } },
+        "missing_evidence": { "type": "array", "items": { "type": "string" } },
+        "required_story_changes": { "type": "array", "items": { "type": "string" } },
+        "required_design_changes": { "type": "array", "items": { "type": "string" } },
+        "required_data_changes": { "type": "array", "items": { "type": "string" } },
+        "slides_to_delete": { "type": "array", "items": { "type": ["string", "integer"] } },
+        "slides_to_merge": { "type": "array", "items": { "type": "string" } },
+        "slides_to_move_to_appendix": { "type": "array", "items": { "type": ["string", "integer"] } },
+        "slides_to_add": { "type": "array", "items": { "type": "string" } },
+        "slides_rewritten": { "type": "array", "items": { "type": ["string", "integer"] } },
+        "executive_summary_rebuilt": { "type": "boolean" },
+        "final_decision_readiness": { "type": "string" },
+        "unresolved_questions": { "type": "array", "items": { "type": "string" } },
+        "approval_rationale": { "type": "string" }
+      }
+    }
+  }
+}

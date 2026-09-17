@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/revision-log.schema.json",
+  "title": "The Artist quality-gate revision log",
+  "type": "object",
+  "required": ["revision_log"],
+  "properties": {
+    "revision_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slide_number",
+          "change_type",
+          "original_issue",
+          "corrective_action",
+          "reason_for_change",
+          "requires_user_input"
+        ],
+        "properties": {
+          "slide_number": { "type": "integer", "minimum": 0 },
+          "change_type": {
+            "enum": [
+              "story",
+              "title",
+              "copy",
+              "chart",
+              "layout",
+              "source",
+              "data",
+              "decision_logic",
+              "appendix"
+            ]
+          },
+          "original_issue": { "type": "string" },
+          "corrective_action": { "type": "string" },
+          "reason_for_change": { "type": "string" },
+          "requires_user_input": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

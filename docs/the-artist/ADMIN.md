@@ -14,15 +14,15 @@ Gumloop cannot author a visual node graph over MCP. Production The Artist is an 
 | 4 Storyline Architect | `artist-storyline` + `prompts/storyline-architect.md` | `storyline` |
 | 5 Slide Architect | `artist-slide-blueprint` + `prompts/slide-architect.md` | `slides[]` |
 | 6 Design Director | `artist-visual-system` + `prompts/design-director.md` | Theme and charts |
-| 7a Template render | `artist-renderer` Branch A | Copy template, populate |
-| 7b Bespoke render | `artist-renderer` Branch B | New Slides deck |
+| 7 Template render | `artist-renderer` | Always copy CVS Health 2025 Enterprise Template; never edit original; bespoke disabled |
 | Drive artifacts | `artist-renderer` | Folder placement |
 | PPTX/PDF export | `artist-renderer` | After export approval |
 | 8 Editor-in-Chief | `artist-editor-in-chief` + `prompts/editor-in-chief.md` | Review + revise |
 | 9 Output package | `artist-output-package` | Modes 1–4 + manifest |
 | Audit record | `artist-output-package` | `audit_record` |
 | Error / fallback | all skills + system prompt | Dry-run vs block |
-| Prompt templates | `artist-templates` | Board / strategy / cyber / redesign |
+| Prompt templates | `artist-templates` | Board / strategy / cyber / redesign narrative packs + CVS template lock |
+| Mandatory PPTX | `templates/CVS-Health-2025-Enterprise-Template.pptx` | CVS Health 2025 Enterprise Template — always copy, never edit |
 
 Schemas live in `docs/the-artist/schemas/`. Primary system prompt: `SYSTEM_PROMPT.md` and `prompts/primary-system-prompt.md`.
 
@@ -74,7 +74,7 @@ Built-in: `web_search`, `web_fetch`, `human_input`, `interaction_search`.
 ## Security
 
 - Artifacts private by default
-- Copy templates; never edit in place
+- Always copy `CVS-Health-2025-Enterprise-Template.pptx`; never edit in place; never substitute another theme
 - Confidentiality label on every deck
 - Audit record per generation
 - No-retention deletes only when requested and approved

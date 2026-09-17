@@ -1,0 +1,120 @@
+{
+  "name": "The Artist — Final Pre-Board Quality Gate",
+  "skill": "artist-final-pre-board-quality-gate",
+  "type": "mandatory_subflow",
+  "implementation_note": "Gumloop MCP cannot author a canvas node graph. This file is the executable workflow contract The Artist must follow. Skills are the nodes.",
+  "position": "after_render_validation_before_final_validation_and_export",
+  "can_be_skipped": false,
+  "default_bypass": false,
+  "nodes": [
+    {
+      "id": "intake",
+      "skill": "artist-intake",
+      "outputs": ["source_register", "deck_brief"]
+    },
+    {
+      "id": "storyline",
+      "skill": "artist-storyline",
+      "outputs": ["storyline"]
+    },
+    {
+      "id": "slide_blueprint",
+      "skill": "artist-slide-blueprint",
+      "outputs": ["slides"]
+    },
+    {
+      "id": "chart_plan_and_design",
+      "skill": "artist-visual-system",
+      "outputs": ["theme", "layouts", "chart_specs"]
+    },
+    {
+      "id": "editor_in_chief",
+      "skill": "artist-editor-in-chief",
+      "outputs": ["editor_review", "revised_slides"]
+    },
+    {
+      "id": "draft_package",
+      "skill": "artist-output-package",
+      "outputs": ["artist_output_package"],
+      "deck_status": "draft"
+    },
+    {
+      "id": "initial_render",
+      "skill": "artist-renderer",
+      "requires_user_approval": true,
+      "outputs": ["working_deck"],
+      "forbidden": ["pptx_export", "pdf_export", "share", "final_folder_promotion"]
+    },
+    {
+      "id": "render_validation",
+      "type": "guard",
+      "checks": ["inspectable_spec_or_render_exists"]
+    },
+    {
+      "id": "pre_board_quality_gate",
+      "skill": "artist-final-pre-board-quality-gate",
+      "mandatory": true,
+      "applies_to": ["pre_render_spec", "post_render_output"],
+      "outputs": [
+        "pre_board_quality_gate",
+        "revised_presentation",
+        "revision_log",
+        "audit_event",
+        "infographic_quality_review"
+      ]
+    },
+    {
+      "id": "revision_and_rerender_loop",
+      "type": "loop",
+      "max_cycles": 3,
+      "if": "status == revision_required",
+      "then": [
+        "apply revised_presentation",
+        "re-render affected slides or infographic",
+        "re-run artist-final-pre-board-quality-gate"
+      ],
+      "after_max_cycles_unresolved": "requires_human_executive_review"
+    },
+    {
+      "id": "finalization_guard",
+      "type": "guard",
+      "allow_finalization_when": [
+        "approved",
+        "approved_with_minor_revisions"
+      ],
+      "stop_when": [
+        "blocked_by_missing_evidence",
+        "requires_human_executive_review",
+        "revision_required"
+      ],
+      "blocks": [
+        "pptx_export",
+        "pdf_export",
+        "external_sharing",
+        "final_drive_folder_promotion",
+        "email_send",
+        "workflow_final",
+        "workflow_exported",
+        "workflow_delivered",
+        "workflow_shared",
+        "workflow_completed"
+      ]
+    },
+    {
+      "id": "user_export_approval",
+      "type": "human_gate",
+      "prompt": "Quality gate passed. Approve PPTX/PDF export, final Drive storage, or sharing?"
+    },
+    {
+      "id": "export_and_archive",
+      "skill": "artist-renderer",
+      "writes": [
+        "03_Working Decks/",
+        "04_Final PPTX/",
+        "05_Final PDF/",
+        "07_Quality Reviews/",
+        "08_JSON Specifications/"
+      ]
+    }
+  ]
+}

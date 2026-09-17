@@ -1,17 +1,23 @@
 ---
 name: artist-templates
 description: >
-  Reusable prompt packs for The Artist. ALWAYS use for a board decision deck,
-  strategy alignment deck, cybersecurity risk committee deck, or existing deck
-  redesign. Supplies the filled template and then hands off to intake,
-  storyline, and blueprint skills.
+  CVS Health 2025 Enterprise Template lock plus narrative prompt packs for The
+  Artist. ALWAYS use before rendering any deck. The attached CVS enterprise
+  PPTX is mandatory for every Board, ELT, Aetna, strategy, cyber, or redesign
+  job. Never edit the original. Never substitute a generic theme.
 icon: book-template
 color: Orange
 ---
 
-# Prompt templates
+# Mandatory visual template
 
-Fill brackets from the user request. Then run the normal pipeline.
+Always copy `CVS-Health-2025-Enterprise-Template.pptx`. Spec: `templates/cvs-health-2025-enterprise-template.json`.
+
+Cover: Board → BOD; CVS ELT → red heart; Aetna ELT → violet heart; other → blue heart. Always include the official executive summary layout. Close on the logo / thank-you layout. Do not present instruction or icon-catalog slides.
+
+# Narrative prompt packs
+
+Fill brackets from the user request. Then run the normal pipeline on the CVS template.
 
 ## Template A — Board decision deck
 

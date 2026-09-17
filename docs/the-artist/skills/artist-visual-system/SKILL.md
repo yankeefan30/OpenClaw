@@ -2,48 +2,48 @@
 name: artist-visual-system
 description: >
   Design Director and chart planner for The Artist. ALWAYS use when applying
-  brand or default visual system, choosing charts, writing layout or
-  accessibility notes, or planning quantitative visuals. User brand overrides
-  defaults. Never invent chart series. Never decorate.
+  the CVS Health 2025 Enterprise Template, choosing official layouts, or
+  planning charts. The CVS template is mandatory. Never invent a substitute
+  brand. Never invent chart series. Never decorate outside the template.
 icon: palette
 color: Bronze
 ---
 
-# Design Director and chart planner
+# Design Director — CVS Health 2025 Enterprise only
 
-Module 6. High-capability Claude. Inputs: `slides[]`, source tables, optional brand.
+Module 6. Inputs: `slides[]`, source tables, `cvs-health-2025-enterprise-template.json`.
 
-## Default system (override if user supplies brand)
+The visual system is the attached CVS Health enterprise template. It is not optional. Do not apply the old generic charcoal/navy/Aptos default. Do not accept a conflicting “user brand” that would replace this template.
 
-Aesthetic: premium, modern, sophisticated, board-ready, editorial, clean, confident, data-forward, high-contrast, spacious, intentional.
+## Theme
 
-Avoid: generic consulting templates, bullet walls, cartoon icons, excessive gradients, “AI-generated” effects, excessive blue, decorative stock, small type, pasted spreadsheets.
-
-### Color
-
-| Token | Hex intent | Use |
+| Token | Hex | Use |
 |---|---|---|
-| charcoal | near `#1A1A1A` | text, framing |
-| ground | warm off-white `#F7F5F2` | backgrounds |
-| navy | deep navy `#0B1F3A` | primary accent |
-| teal | `#0F7B6C` | target, approved, positive |
-| amber | `#C9842A` | watch, attention |
-| red | `#B42318` | material risk, decline, blocker |
-| gray | `#8A8580` | context series |
+| heart red | `#9E0000` / `#CC0000` | CVS identity, primary accent, cover heart |
+| navy | `#0B315E` | titles, dividers, framing |
+| blue | `#0A4B8C` | secondary accent, general ELT cover |
+| dark gray | `#3F3F3F` | body text |
+| mid gray | `#646464` | supporting labels |
+| ground | `#FFFFFF` / `#F7F7F7` | backgrounds |
+| success green | `#61A515` / `#00B050` | positive variance only when data supports it |
+| watch orange | `#F26B43` | attention |
+| material red | `#CC0000` | decline, blocker, residual risk |
 
-One accent per analytical visual unless comparison requires more. Mute non-focus series. Never rely on color alone.
+Type: **CVS Health Sans** (fallback Calibri / Arial only if the face is unavailable). Content titles 24–32 pt. Chart titles 26–32 pt. Subtitles 18 pt light / dark gray. One accent per analytical visual.
 
-### Type
+## Layouts — use only these
 
-Aptos, Avenir, Helvetica Neue, Inter, or equivalent. Max two families. Titles 28–36 pt. Subtitles 18–24 pt. Body 16–22 pt. Chart labels 12–16 pt. Footnotes 9–11 pt only if unavoidable. No all-caps body. Left-align analytical content.
+Cover by audience:
+- Board → Title Slide BOD
+- CVS ELT → Title Slide CVS red heart
+- Aetna ELT → Title Slide Aetna violet heart
+- Other ELT / strategy → Title Slide General blue heart
 
-### Grid
+Required: Executive summary layout. Close on the official thank-you / logo layout.
 
-Consistent margins, generous white space, repeated title and source-note placement, one focal point. Do not center everything.
+Content: Key message or Agenda; Strategic questions; Content slide; Biography; one/two/three/four column; title only; callout variants; white / light-blue / navy dividers.
 
-### Icons and images
-
-Icons only when they reduce text; one line style. Images only for cover or a purposeful metaphor, paired with an insight-led title.
+Do not present template how-to slides, lorem examples, or the icon catalog. If an icon is needed, use the template outline set.
 
 ## Chart selection
 
@@ -58,20 +58,13 @@ Icons only when they reduce text; one line style. Images only for cover or a pur
 | What happens under scenarios? | Scenario table, line, or tornado |
 | Where is risk concentrated? | Heat map, Pareto, concentration bar |
 | What is the sequence? | Roadmap / milestone |
-| What is the future operating model? | Layered architecture or process |
 
-Rules: takeaway visible without reading every label; sort bars descending unless chronology matters; avoid pies unless few categories and composition is the question; no 3D; no dual axes unless unavoidable and explained; prefer direct labels to legends; highlight the decision series; gray context; label estimates/forecasts; do not truncate axes in a misleading way; consistent units and decimals.
-
-For each quantitative slide: analytic question, chart type, transforms, labels, annotations, chart-ready data from sources only, accessibility notes (contrast, non-color encoding, alt text).
-
-## Output
-
-Attach to each slide: `design_instructions`, theme tokens, and completed `chart_or_diagram`. Record brand overrides.
+No 3D. No pies unless few categories and composition is the question. Direct labels. Official CVS colors only. Mark `[MISSING]` when a series is absent. Do not invent data.
 
 ## Errors
 
 | Condition | Action |
 |---|---|
-| Brand conflict | User brand wins; note override |
-| No source series | Keep chart type; mark `[MISSING]` |
-| Decorative request | Refuse; choose a decision visual |
+| Request for a different theme | Refuse; stay on CVS 2025 Enterprise |
+| Template file missing in Drive | Copy from the repo package on first production run |
+| No source series | Keep chart type; `[MISSING]` |
