@@ -1,153 +1,61 @@
 ---
 name: artist-setup
 description: >
-  Setup, connector preflight, and activation for The Artist. ALWAYS use on first
-  session, activate, setup, connector check, readiness, folder creation, or when
-  Google Drive / Google Slides / Claude status is unknown. Runs health checks
-  only. Creates Drive folders or marks the agent active only after explicit
-  approval. Never writes files during a status check.
-icon: shield-check
+  Connector preflight and Drive workspace bootstrap for The Artist. ALWAYS use
+  on first session, activate, setup, connector check, or when Drive / Slides /
+  Claude status is unknown. Checks technical health. Creates the production
+  folder tree automatically when Drive is usable and a deck run starts. Does
+  not ask for administrative approval. Does not share files.
+icon: plug
 color: Teal
 related_server_ids: [gdrive, gslides]
 ---
 
-# Artist setup and connector verification
+# Artist setup
 
-Run this module before any deck is rendered. Reads and capability tests do not need approval. Writes do.
+Technical health only. Operating posture: `high_autonomy_creative_production`.
 
-## 1. Detect connectors
+## Connectors
 
-Test these three. Do not claim connected until a lightweight test succeeds. Never print API keys, tokens, or cookies.
+Required: Claude / Gumloop model; Google Drive; Google Slides.
+Use when available: Google Sheets; Excel.
+Optional: Word / Google Docs; image generator.
+Disabled by default: Gamma, email, Slack, any sharing connector.
 
-### Claude / Anthropic
+Capability-test each required connector. Never print keys, tokens, or cookies.
+Do not claim connected until a lightweight test succeeds.
 
-Capability test: the agent can complete this skill using the configured high-capability model (`gummies_smartest` / Claude 5 Opus, or the user-selected Claude model). If the model call fails, status is `unavailable` or `unauthorized`.
+If Drive and Slides work, status is `ready_for_draft_generation` or `ready_for_rendering`.
+If only Claude works, still generate brief/storyline/blueprint and mark later render `rendering_failed` if Slides/Drive cannot write.
+Use `rendering_failed` only for technical failure. Do not use `blocked`, `partially_ready`, `safe_draft_only`, or `approval_required`.
 
-```json
-{
-  "connector": "anthropic_claude",
-  "status": "connected | missing_credentials | unauthorized | unavailable",
-  "model_available": "",
-  "recommended_action": ""
-}
-```
+Do not ask which Google account to use when one configured account already works. Do not require enterprise-account routing.
 
-Remediation if blocked: open Gumloop credentials / Anthropic connector settings. Do not place a key in chat. BYOK stays in Gumloop organization API-key settings.
+## Folder tree — create automatically when missing
 
-### Google Drive
-
-Capability test (read-only): `search` or `list_files` with `max_results`/`max_limit` of 1. If the user already named a parent folder, `list_contents` on that folder.
-
-```json
-{
-  "connector": "google_drive",
-  "status": "connected | missing_credentials | unauthorized | unavailable",
-  "selected_account": "",
-  "template_folder_access": true,
-  "output_folder_access": true,
-  "recommended_action": ""
-}
-```
-
-If more than one Google account could apply, stop and ask which account to use. Do not guess.
-
-Remediation: [Connect Google Drive](https://gumloop.com/settings/profile/apps?server=gdrive)
-
-### Google Slides
-
-Capability test: list tools on `gslides`. If the server is `unauthenticated` or returns no tools, status is `missing_credentials`. Do not create a presentation to test.
-
-```json
-{
-  "connector": "google_slides",
-  "status": "connected | missing_credentials | unauthorized | unavailable",
-  "can_create_presentations": true,
-  "can_edit_presentations": true,
-  "can_use_templates": true,
-  "can_export_pptx": true,
-  "can_export_pdf": true,
-  "recommended_action": ""
-}
-```
-
-Remediation: [Connect Google Slides](https://gumloop.com/settings/profile/apps?server=gslides)
-
-Also note Gamma (`gamma`) as an optional confirmed PPTX fallback. It is not a substitute for declaring Slides unauthenticated.
-
-## 2. Status dashboard language
-
-Use exactly one of: Connected and tested | Connected but missing required permission | Not connected | Authentication expired | Tool unavailable | Connected but not yet assigned to The Artist.
-
-## 3. Readiness report
-
-Return `artist_readiness_report` matching `references/readiness-report.schema.json`.
-
-- `ready`: Claude + Drive + Slides all passed capability tests. `safe_to_activate` may be true only after the user confirms the activation copy.
-- `partially_ready`: Claude works; Drive and/or Slides do not. Dry-run narrative work is allowed. Rendering is blocked.
-- `blocked`: Claude is unavailable. Do not generate storylines or decks.
-
-## 4. Folder structure (write — approval required)
-
-Ask the user to choose or approve a Google Drive parent folder. After explicit approval only, create:
+On the first production run (or when the user names a parent folder), create:
 
 ```text
 The Artist/
-├── 01_Templates/
-│   ├── Board Decision Deck/
-│   ├── Executive Strategy/
-│   ├── Cybersecurity Risk Committee/
-│   ├── Technology Transformation/
-│   ├── Operating Review/
-│   └── Blank Premium Default/
-├── 02_Source Materials/
-├── 03_Working Decks/
-├── 04_Final PPTX/
-├── 05_Final PDF/
-├── 06_Appendices/
-├── 07_Quality Reviews/
-├── 08_JSON Specifications/
-└── 09_Archive/
+├── Templates/
+├── Source Materials/
+├── Working Decks/
+├── Final Decks/
+│   ├── Google Slides/
+│   ├── PowerPoint/
+│   └── PDF/
+├── Infographics/
+├── Appendices/
+├── Quality Reviews/
+├── Presentation Specifications/
+├── Source Registers/
+└── Archive/
 ```
 
-Use `gdrive.create_folder_subfolder`. Do not share folders. Do not create in root unless the user said root. Save folder IDs into the configuration record.
+No approval prompt. Do not share folders. Do not delete user sources or templates.
 
-## 5. Activation confirmation
+This configuration change does **not** create folders until the user starts a production command. A setup-only check remains read-only.
 
-If all required connectors pass, show this copy in substance, then wait:
+## Activation
 
-```text
-The Artist is ready to activate.
-
-It will use:
-- Claude for executive reasoning, storytelling, and presentation QA.
-- Google Drive to store approved templates, source files, working decks, and final artifacts.
-- Google Slides to create and edit presentations.
-- Google Slides export to produce editable PowerPoint (.pptx) and PDF versions.
-
-By activating, you authorize The Artist to create new folders and files only inside the selected Google Drive workspace when you explicitly request a deck or approve a setup action. It will not share files externally or modify templates without separate approval.
-
-Activate The Artist with this configuration?
-```
-
-Store the approved configuration only after confirmation:
-
-- Claude model / model profile
-- Google account
-- Template folder ID
-- Output folder ID
-- Default branding
-- Default confidentiality label
-- Default presentation mode
-- Activation state = active
-
-If any required connector failed: show exact remediation. Do not create files or decks. Do not mark the agent active for rendering.
-
-## 6. Error handling
-
-| Condition | Action |
-|---|---|
-| Claude unavailable | `overall_status=blocked`. Preserve nothing that requires generation. Show credential remediation. |
-| Drive unavailable | Allow later dry-run brief/storyline/blueprint. Do not save files. |
-| Slides unavailable | Dry-run + `rendering_pending`. Show Slides connect URL. |
-| Multiple Google accounts | Ask. Do not pick. |
-| User declines activation | Save nothing. Remain inactive for writes. |
+If required connectors pass, The Artist is active for production. Do not wait for an activation confirmation. Tell the user they can say **Produce Executive Deck** or **Produce Quick Executive Draft**.

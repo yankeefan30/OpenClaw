@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/infographic-quality-review.schema.json",
+  "title": "The Artist infographic quality review",
+  "type": "object",
+  "required": ["infographic_quality_review"],
+  "properties": {
+    "infographic_quality_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_message",
+        "executive_relevance_score_out_of_10",
+        "visual_hierarchy_score_out_of_10",
+        "data_integrity_score_out_of_10",
+        "design_quality_score_out_of_10",
+        "issues_found",
+        "redesign_actions",
+        "final_status"
+      ],
+      "properties": {
+        "primary_message": { "type": "string" },
+        "executive_relevance_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "visual_hierarchy_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "data_integrity_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "design_quality_score_out_of_10": { "type": "number", "minimum": 0, "maximum": 10 },
+        "issues_found": { "type": "array", "items": { "type": "string" } },
+        "redesign_actions": { "type": "array", "items": { "type": "string" } },
+        "final_status": {
+          "enum": [
+            "approved",
+            "approved_with_minor_revisions",
+            "revision_required",
+            "blocked_by_missing_evidence",
+            "requires_human_executive_review"
+          ]
+        }
+      }
+    }
+  }
+}

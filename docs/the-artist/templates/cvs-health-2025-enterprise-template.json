@@ -1,0 +1,94 @@
+{
+  "template_id": "cvs-health-2025-enterprise",
+  "display_name": "CVS Health 2025 Enterprise Template",
+  "filename": "CVS-Health-2025-Enterprise-Template.pptx",
+  "repo_path": "docs/the-artist/templates/CVS-Health-2025-Enterprise-Template.pptx",
+  "drive_destination_when_bootstrapped": "The Artist/Templates/CVS-Health-2025-Enterprise-Template.pptx",
+  "mandatory": true,
+  "always_use": true,
+  "never_edit_original": true,
+  "never_substitute_premium_default": true,
+  "never_render_bespoke": true,
+  "source": {
+    "uploaded_as": "2025 Enterprise Template.pptx",
+    "creator": "Saccoman, Cynthia A",
+    "theme_name": "CVS Health",
+    "font_scheme": "CVS Fonts",
+    "slide_count": 55,
+    "layout_count": 22
+  },
+  "typography": {
+    "family": "CVS Health Sans",
+    "title_pt": "24-32 content / 26-32 charts",
+    "subtitle_pt": 18,
+    "fallback_if_unavailable": ["Calibri", "Arial"]
+  },
+  "colors": {
+    "theme": {
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#3F3F3F",
+      "lt2": "#C0C0C0",
+      "accent1_heart_red": "#9E0000",
+      "accent2_red": "#CC0000",
+      "accent3": "#E94D4D",
+      "accent4": "#F7978D",
+      "accent5": "#646464",
+      "accent6": "#868686"
+    },
+    "used_in_file": {
+      "navy": "#0B315E",
+      "deep_navy": "#07386A",
+      "blue": "#0A4B8C",
+      "mid_blue": "#267AC0",
+      "sky": "#00B0F0",
+      "teal": "#00A78E",
+      "green": "#61A515",
+      "success": "#00B050",
+      "orange": "#F26B43",
+      "ground": "#F7F7F7",
+      "rule": "#E9E9E9"
+    }
+  },
+  "cover_layouts": {
+    "board": "Title Slide BOD",
+    "cvs_elt": "Title Slide CVS red heart",
+    "aetna_elt": "Title Slide Aetna violet heart",
+    "other_elt_or_strategy": "Title Slide General blue heart"
+  },
+  "required_slides_from_template": [
+    "Audience-matched cover",
+    "Executive summary (template-mandated; 3-5 takeaways plus 2-3 board questions when the audience is the Board)",
+    "Content slides using official layouts only",
+    "Closing / thank-you logo slide"
+  ],
+  "do_not_present": [
+    "Instruction slides (template how-to, presentation tips)",
+    "Icon catalog slides",
+    "Placeholder lorem content"
+  ],
+  "layouts": [
+    "Title Slide BOD",
+    "Title Slide CVS red heart",
+    "Title Slide Aetna violet heart",
+    "Title Slide General blue heart",
+    "Key message or Agenda",
+    "Executive summary",
+    "Strategic questions",
+    "Content slide",
+    "Biography",
+    "One column layout",
+    "Title Only",
+    "Two column layout",
+    "Two column layout no heart",
+    "One column layout 1",
+    "One column layout w/callout",
+    "One column layout w/callout 2",
+    "Four column layout",
+    "Three column layout",
+    "Divider white",
+    "Divider light blue",
+    "Divider navy",
+    "Closing slide"
+  ]
+}

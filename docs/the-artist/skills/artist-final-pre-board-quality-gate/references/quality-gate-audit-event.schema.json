@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/quality-gate-audit-event.schema.json",
+  "title": "The Artist pre-board quality-gate audit event",
+  "type": "object",
+  "required": ["audit_event"],
+  "properties": {
+    "audit_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "timestamp",
+        "artifact_name",
+        "artifact_type",
+        "workflow_run_id",
+        "quality_gate_cycle",
+        "initial_score",
+        "final_score",
+        "status",
+        "slides_changed",
+        "user_approval_required",
+        "finalization_allowed"
+      ],
+      "properties": {
+        "event_type": { "const": "pre_board_quality_gate_run" },
+        "timestamp": { "type": "string" },
+        "artifact_name": { "type": "string" },
+        "artifact_type": { "enum": ["deck", "infographic", "executive_visual"] },
+        "workflow_run_id": { "type": "string" },
+        "quality_gate_cycle": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "initial_score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "final_score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "status": {
+          "enum": [
+            "approved",
+            "approved_with_minor_revisions",
+            "revision_required",
+            "blocked_by_missing_evidence",
+            "requires_human_executive_review"
+          ]
+        },
+        "slides_changed": { "type": "array", "items": { "type": ["string", "integer"] } },
+        "user_approval_required": { "type": "boolean" },
+        "finalization_allowed": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "operating_posture": "high_autonomy_creative_production",
+  "default_deliverable": "finished_deck_package",
+  "stop_after_outline_by_default": false,
+  "administrative_confirmations": "none_during_normal_production",
+  "only_outbound_restriction": "external_sharing_requires_explicit_request",
+  "connectors": {
+    "required": ["claude", "gdrive", "gslides"],
+    "use_when_available": ["gsheets", "excel", "limitless"],
+    "optional": ["word", "google_docs", "image_generator"],
+    "disabled_by_default": ["gamma", "email", "slack", "external_sharing"]
+  },
+  "classification_gating": "disabled",
+  "treat_user_materials_as_authorized": true,
+  "artifacts_private_by_default": true,
+  "quality_gate_mandatory": true,
+  "auto_export_on_quality_approval": true,
+  "auto_save_draft_on_missing_evidence": true,
+  "max_revision_cycles_full": 3,
+  "max_revision_cycles_quick": 1,
+  "mandatory_template": {
+    "id": "cvs-health-2025-enterprise",
+    "filename": "CVS-Health-2025-Enterprise-Template.pptx",
+    "always_use": true,
+    "allow_premium_default_fallback": false,
+    "allow_bespoke_render": false,
+    "never_edit_original": true
+  }
+}

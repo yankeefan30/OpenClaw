@@ -28,7 +28,11 @@ In the Gumloop agent chat, include:
 7. Output mode (outline, full blueprint, JSON, redesign, or render after approval)
 8. Confidentiality label
 
-Optional: presenter, brand/template, tone, prohibited claims, whether you need PPTX, PDF, speaker notes, or an appendix.
+Every deck uses the **CVS Health 2025 Enterprise Template**. The Artist copies it; it never edits the original and never switches themes. Optional: presenter, tone, prohibited claims, whether you need speaker notes or an appendix.
+
+To revise an existing deck from a conversation, attach the deck and say **Apply Lifelog Feedback** with the Limitless meeting, date, or topic. The Artist searches that lifelog and updates a new version of the file. It does not overwrite the original.
+
+To turn a Limitless meeting into one-page notes, say **Produce Meeting Infographic** and name the lifelog. The Artist follows the `meeting-infographic` skill and saves a portrait HTML file you can print to PDF.
 
 If you dump an unstructured brief, The Artist will infer fields and tell you what it inferred.
 
@@ -62,6 +66,6 @@ You still get the brief, storyline, blueprint, speaker notes, and JSON. The pack
 
 - Invent metrics, quotes, or financial benefits
 - Share files by default
-- Edit a corporate template in place
+- Edit the CVS Health 2025 Enterprise Template in place or replace it with another theme
 - Put secrets in filenames or chat
 - Substitute a one-page infographic for a requested multi-slide deck

@@ -1,0 +1,36 @@
+{
+  "skill_name": "The Artist — Final Pre-Board Quality Gate",
+  "skill_id_name": "artist-final-pre-board-quality-gate",
+  "invocation": "mandatory",
+  "can_be_skipped": false,
+  "default_bypass": "disabled",
+  "emergency_bypass_enabled": false,
+  "automatic_approval_overall": 9.0,
+  "board_readiness_threshold": 9.0,
+  "executive_summary_threshold": 9.0,
+  "decision_clarity_threshold": 9.0,
+  "minor_revisions_min": 8.5,
+  "minor_revisions_max": 8.9,
+  "max_revision_cycles": 3,
+  "quick_draft_reduced_duration": true,
+  "quick_draft_still_required_checks": [
+    "narrative_clarity",
+    "title_quality",
+    "text_density",
+    "visual_professionalism",
+    "source_integrity",
+    "decision_clarity"
+  ],
+  "blocked_events_until_approved": [
+    "pptx_export",
+    "pdf_export",
+    "external_sharing",
+    "final_drive_folder_promotion",
+    "email_send",
+    "workflow_final",
+    "workflow_exported",
+    "workflow_delivered",
+    "workflow_shared",
+    "workflow_completed"
+  ]
+}
