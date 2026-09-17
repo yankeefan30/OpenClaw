@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/deck-brief.schema.json",
+  "title": "The Artist deck brief",
+  "type": "object",
+  "required": ["deck_brief"],
+  "properties": {
+    "deck_brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deck_title", "objective", "audience", "audience_priorities", "decision_required",
+        "decision_owner", "decision_deadline", "business_context", "stakes", "scope",
+        "time_horizon", "confidentiality", "known_facts", "assumptions",
+        "risks_or_uncertainties", "open_questions", "source_inventory"
+      ],
+      "properties": {
+        "deck_title": { "type": "string" },
+        "objective": { "type": "string" },
+        "audience": { "type": "string" },
+        "audience_priorities": { "type": "array", "items": { "type": "string" } },
+        "decision_required": { "type": "string" },
+        "decision_owner": { "type": "string" },
+        "decision_deadline": { "type": "string" },
+        "business_context": { "type": "string" },
+        "stakes": { "type": "string" },
+        "scope": { "type": "string" },
+        "time_horizon": { "type": "string" },
+        "confidentiality": { "enum": ["Confidential", "Internal Use Only", "Board Confidential", "Draft", "No label"] },
+        "known_facts": { "type": "array", "items": { "type": "string" } },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "risks_or_uncertainties": { "type": "array", "items": { "type": "string" } },
+        "open_questions": { "type": "array", "items": { "type": "string" } },
+        "source_inventory": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

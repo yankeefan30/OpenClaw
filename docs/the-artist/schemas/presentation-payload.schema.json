@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/presentation-payload.schema.json",
+  "title": "The Artist PowerPoint-ready presentation payload",
+  "type": "object",
+  "required": ["presentation"],
+  "properties": {
+    "presentation": {
+      "type": "object",
+      "required": ["title", "subtitle", "audience", "objective", "theme", "slides"],
+      "properties": {
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "audience": { "type": "string" },
+        "objective": { "type": "string" },
+        "confidentiality": { "type": "string" },
+        "theme": {
+          "type": "object",
+          "required": ["font_family", "primary_color", "accent_color", "background_color", "style_notes"],
+          "properties": {
+            "font_family": { "type": "string" },
+            "primary_color": { "type": "string" },
+            "accent_color": { "type": "string" },
+            "background_color": { "type": "string" },
+            "style_notes": { "type": "string" }
+          }
+        },
+        "slides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "layout", "text_blocks", "shapes", "tables", "charts", "image_placeholders", "speaker_notes", "source_notes", "accessibility_notes"],
+            "properties": {
+              "slide_number": { "type": "integer" },
+              "title": { "type": "string" },
+              "layout": { "type": "string" },
+              "text_blocks": { "type": "array" },
+              "shapes": { "type": "array" },
+              "tables": { "type": "array" },
+              "charts": { "type": "array" },
+              "image_placeholders": { "type": "array" },
+              "speaker_notes": { "type": "string" },
+              "source_notes": { "type": "string" },
+              "accessibility_notes": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

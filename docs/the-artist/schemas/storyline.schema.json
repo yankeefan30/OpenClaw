@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/storyline.schema.json",
+  "title": "The Artist storyline",
+  "type": "object",
+  "required": ["storyline"],
+  "properties": {
+    "storyline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "governing_thought", "executive_takeaway", "situation", "complication",
+        "key_question", "answer", "supporting_arguments", "recommendation",
+        "decision_ask", "consequence_of_inaction", "story_arc"
+      ],
+      "properties": {
+        "governing_thought": { "type": "string" },
+        "executive_takeaway": { "type": "string" },
+        "situation": { "type": "string" },
+        "complication": { "type": "string" },
+        "key_question": { "type": "string" },
+        "answer": { "type": "string" },
+        "supporting_arguments": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": ["argument", "evidence_needed", "implication"],
+            "properties": {
+              "argument": { "type": "string" },
+              "evidence_needed": { "type": "array", "items": { "type": "string" } },
+              "implication": { "type": "string" }
+            }
+          }
+        },
+        "recommendation": { "type": "string" },
+        "decision_ask": { "type": "string" },
+        "consequence_of_inaction": { "type": "string" },
+        "story_arc": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

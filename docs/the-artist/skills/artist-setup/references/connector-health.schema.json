@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/connector-health.schema.json",
+  "title": "The Artist connector health checks",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["anthropic_claude", "google_drive", "google_slides"],
+  "properties": {
+    "anthropic_claude": {
+      "type": "object",
+      "required": ["connector", "status", "model_available", "recommended_action"],
+      "properties": {
+        "connector": { "const": "anthropic_claude" },
+        "status": { "enum": ["connected", "missing_credentials", "unauthorized", "unavailable"] },
+        "model_available": { "type": "string" },
+        "recommended_action": { "type": "string" }
+      }
+    },
+    "google_drive": {
+      "type": "object",
+      "required": ["connector", "status", "selected_account", "template_folder_access", "output_folder_access", "recommended_action"],
+      "properties": {
+        "connector": { "const": "google_drive" },
+        "status": { "enum": ["connected", "missing_credentials", "unauthorized", "unavailable"] },
+        "selected_account": { "type": "string" },
+        "template_folder_access": { "type": "boolean" },
+        "output_folder_access": { "type": "boolean" },
+        "recommended_action": { "type": "string" }
+      }
+    },
+    "google_slides": {
+      "type": "object",
+      "required": ["connector", "status", "can_create_presentations", "can_edit_presentations", "can_use_templates", "can_export_pptx", "can_export_pdf", "recommended_action"],
+      "properties": {
+        "connector": { "const": "google_slides" },
+        "status": { "enum": ["connected", "missing_credentials", "unauthorized", "unavailable"] },
+        "can_create_presentations": { "type": "boolean" },
+        "can_edit_presentations": { "type": "boolean" },
+        "can_use_templates": { "type": "boolean" },
+        "can_export_pptx": { "type": "boolean" },
+        "can_export_pdf": { "type": "boolean" },
+        "recommended_action": { "type": "string" }
+      }
+    }
+  }
+}

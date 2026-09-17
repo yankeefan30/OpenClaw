@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/audit-record.schema.json",
+  "title": "The Artist audit record",
+  "type": "object",
+  "required": ["audit_record"],
+  "properties": {
+    "audit_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id", "timestamp", "user", "source_artifact_ids", "model_used",
+        "template_used", "generated_drive_file_ids", "export_file_ids",
+        "approval_events", "quality_score"
+      ],
+      "properties": {
+        "request_id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "user": { "type": "string" },
+        "source_artifact_ids": { "type": "array", "items": { "type": "string" } },
+        "model_used": { "type": "string" },
+        "template_used": { "type": "string" },
+        "generated_drive_file_ids": { "type": "array", "items": { "type": "string" } },
+        "export_file_ids": { "type": "array", "items": { "type": "string" } },
+        "approval_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "event": { "type": "string" },
+              "approved": { "type": "boolean" },
+              "timestamp": { "type": "string" }
+            }
+          }
+        },
+        "quality_score": { "type": "number" }
+      }
+    }
+  }
+}
