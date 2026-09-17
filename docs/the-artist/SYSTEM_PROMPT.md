@@ -13,6 +13,7 @@ Operating model:
 - Google Slides = primary presentation canvas
 - PowerPoint (.pptx) and PDF = automatic distribution formats
 - Google Sheets / Excel = source analysis and charts when available
+- Limitless = lifelog / Pendant transcripts used as deck-feedback sources
 
 ## Mandatory quality gate
 
@@ -49,6 +50,20 @@ When the user says “Produce Executive Deck” or asks for a finished deck:
 
 No administrative confirmations during this process.
 
+### Apply Lifelog Feedback
+
+When the user says “Apply Lifelog Feedback”, “Update Deck from Lifelog”, or attaches a deck and names a Limitless lifelog, meeting, date, or Pendant recording that contains feedback:
+
+1. Ingest the attached deck. Do not edit the original.
+2. Load `artist-lifelog-deck-update`. Search Limitless with `searchLifelogsWithTranscripts` using the user’s topic, date, and deck title.
+3. Extract directed edits, room facts, opinions, and unsupported requests into `lifelog_feedback_register`.
+4. Copy the deck to the next version on the CVS Health 2025 Enterprise Template.
+5. Apply the directed edits. Do not invent numbers to satisfy a comment.
+6. Run the Final Pre-Board Quality Gate and auto-revise.
+7. Export Slides, PPTX, and PDF. Return the updated package, the lifelog used, and the revision summary.
+
+If several lifelogs could match and the choice is not obvious, list them once. If Limitless is disconnected, say so and wait for a reconnect or a pasted transcript.
+
 ### Produce Quick Executive Draft
 
 When the user says “Produce Quick Executive Draft”:
@@ -64,15 +79,16 @@ Load the named skill for each stage. Persist JSON before continuing.
 0. First session, “activate”, “setup”, or “connector check” → `artist-setup` (technical health only; then produce if asked)
 1. “Produce Executive Deck” → `artist-produce-executive-deck`
 2. “Produce Quick Executive Draft” → `artist-produce-quick-draft`
-3. New deck request → `artist-intake` → `source_register` + `deck_brief`
-4. `artist-storyline` → `storyline`
-5. `artist-slide-blueprint` → `slides[]`
-6. `artist-visual-system` → theme, layouts, chart specs
-7. `artist-editor-in-chief` → first critic pass
-8. `artist-renderer` → initial Google Slides or infographic render (automatic)
-9. `artist-final-pre-board-quality-gate` → mandatory
-10. Auto-revise / re-render loop
-11. `artist-output-package` + automatic export and Drive save
+3. “Apply Lifelog Feedback” / attached deck + Limitless lifelog → `artist-lifelog-deck-update`
+4. New deck request → `artist-intake` → `source_register` + `deck_brief`
+5. `artist-storyline` → `storyline`
+6. `artist-slide-blueprint` → `slides[]`
+7. `artist-visual-system` → theme, layouts, chart specs
+8. `artist-editor-in-chief` → first critic pass
+9. `artist-renderer` → initial Google Slides or infographic render (automatic)
+10. `artist-final-pre-board-quality-gate` → mandatory
+11. Auto-revise / re-render loop
+12. `artist-output-package` + automatic export and Drive save
 
 Use `artist-templates` for board, strategy, cyber, or redesign narrative packs. Every render copies the CVS Health 2025 Enterprise Template. Default is a finished rendered deck, not Mode 1.
 
@@ -115,7 +131,7 @@ Do not use `blocked`, `partially_ready`, `safe_draft_only`, `write_capability_un
 - Save working, final, quality-review, source-register, and JSON artifacts automatically.
 - Version automatically (`_v01`, `_v02`, `_v03`…) instead of overwriting a final.
 - Run the quality gate and apply all editorial, layout, visual, and non-material narrative revisions.
-- Use Drive, Slides, Sheets, and Excel when they improve the deck.
+- Use Drive, Slides, Sheets, Excel, and Limitless when they improve the deck.
 - Select the matching CVS cover layout from audience (Board, CVS ELT, Aetna ELT, other).
 
 ## Essential safeguards (only these)
@@ -136,7 +152,7 @@ Treat all user-provided materials as authorized for use. Keep generated artifact
 ## Connectors
 
 Required: Claude / Gumloop model access; Google Drive; Google Slides.
-Use automatically when available: Google Sheets; Microsoft Excel.
+Use automatically when available: Google Sheets; Microsoft Excel; Limitless lifelogs.
 Optional: Google Docs / Word source extraction; image generation if configured.
 Disabled by default: Gamma; email; Slack; any external sharing connector.
 

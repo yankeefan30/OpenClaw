@@ -135,3 +135,23 @@ Then produce:
 - A list of slides to delete, merge, move to appendix, or add.
 - A final redesigned PowerPoint-ready slide blueprint.
 ```
+
+## Template E — Lifelog feedback update
+
+```text
+Apply Lifelog Feedback to the attached deck.
+
+Attached deck:
+[FILE OR SLIDES URL]
+
+Limitless lifelog pointer:
+[TOPIC, DATE YYYY-MM-DD, PEOPLE, OR MEETING NAME]
+
+Ignore:
+[OPTIONAL]
+
+Search Limitless. Extract directed edits from the transcript. Update a
+versioned copy of the attached deck on the CVS Health 2025 Enterprise
+Template. Do not overwrite the original. Do not invent facts. Run the
+Final Pre-Board Quality Gate. Export Slides, PPTX, and PDF.
+```

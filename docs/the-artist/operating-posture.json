@@ -6,7 +6,7 @@
   "only_outbound_restriction": "external_sharing_requires_explicit_request",
   "connectors": {
     "required": ["claude", "gdrive", "gslides"],
-    "use_when_available": ["gsheets", "excel"],
+    "use_when_available": ["gsheets", "excel", "limitless"],
     "optional": ["word", "google_docs", "image_generator"],
     "disabled_by_default": ["gamma", "email", "slack", "external_sharing"]
   },

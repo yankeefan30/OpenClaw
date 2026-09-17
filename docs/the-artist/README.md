@@ -30,6 +30,8 @@ In the Gumloop agent chat, include:
 
 Every deck uses the **CVS Health 2025 Enterprise Template**. The Artist copies it; it never edits the original and never switches themes. Optional: presenter, tone, prohibited claims, whether you need speaker notes or an appendix.
 
+To revise an existing deck from a conversation, attach the deck and say **Apply Lifelog Feedback** with the Limitless meeting, date, or topic. The Artist searches that lifelog and updates a new version of the file. It does not overwrite the original.
+
 If you dump an unstructured brief, The Artist will infer fields and tell you what it inferred.
 
 ## First-run activation

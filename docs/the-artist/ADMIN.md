@@ -23,6 +23,7 @@ Gumloop cannot author a visual node graph over MCP. Production The Artist is an 
 | Error / fallback | all skills + system prompt | Dry-run vs block |
 | Prompt templates | `artist-templates` | Board / strategy / cyber / redesign narrative packs + CVS template lock |
 | Mandatory PPTX | `templates/CVS-Health-2025-Enterprise-Template.pptx` | CVS Health 2025 Enterprise Template — always copy, never edit |
+| Lifelog deck update | `artist-lifelog-deck-update` | Search Limitless, apply spoken feedback to a versioned copy of an attached deck |
 
 Schemas live in `docs/the-artist/schemas/`. Primary system prompt: `SYSTEM_PROMPT.md` and `prompts/primary-system-prompt.md`.
 
@@ -65,7 +66,8 @@ If a live skill still shows a scaffold description, upload the matching `docs/th
 | `gslides` | Primary canvas + export | none; user must authenticate |
 | `excel`, `gsheets` | Numeric sources | no silent destructive writes |
 | `word` | Narrative sources | create/write/delete unless asked |
-| `gamma` | Optional confirmed PPTX fallback | confirm before generate |
+| Limitless `xat7jjj8vlu9gns6henqif` | Lifelog / Pendant transcripts for deck feedback | read-only; approval off |
+| `gamma` | Disabled by default | detached |
 
 Built-in: `web_search`, `web_fetch`, `human_input`, `interaction_search`.
 

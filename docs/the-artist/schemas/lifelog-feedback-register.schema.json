@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-artist.local/schemas/lifelog-feedback-register.schema.json",
+  "title": "The Artist Limitless lifelog feedback register",
+  "type": "object",
+  "required": ["lifelog_feedback_register"],
+  "properties": {
+    "lifelog_feedback_register": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_used",
+        "lifelog_title",
+        "lifelog_date",
+        "match_rationale",
+        "directed_edits",
+        "new_facts_from_room",
+        "opinions",
+        "unsupported_requests",
+        "slides_affected",
+        "original_deck_preserved",
+        "output_version"
+      ],
+      "properties": {
+        "query_used": { "type": "string" },
+        "lifelog_title": { "type": "string" },
+        "lifelog_date": { "type": "string" },
+        "match_rationale": { "type": "string" },
+        "directed_edits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["request", "slide_target", "action", "evidence_quote"],
+            "properties": {
+              "request": { "type": "string" },
+              "slide_target": { "type": "string" },
+              "action": {
+                "enum": [
+                  "rewrite",
+                  "redesign",
+                  "merge",
+                  "delete",
+                  "move_to_appendix",
+                  "add",
+                  "retain"
+                ]
+              },
+              "evidence_quote": { "type": "string" }
+            }
+          }
+        },
+        "new_facts_from_room": { "type": "array", "items": { "type": "string" } },
+        "opinions": { "type": "array", "items": { "type": "string" } },
+        "unsupported_requests": { "type": "array", "items": { "type": "string" } },
+        "slides_affected": { "type": "array", "items": { "type": ["string", "integer"] } },
+        "original_deck_preserved": { "type": "boolean" },
+        "output_version": { "type": "string" }
+      }
+    }
+  }
+}
