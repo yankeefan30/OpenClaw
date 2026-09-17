@@ -46,7 +46,7 @@ Canonical skill packages are in this repo. Live Gumloop skill IDs (attached):
 | `meeting-infographic` | `TjTzPcNfzS6WLuNE3qvDMW` |
 | `artist-lifelog-infographic` | `FQkBCiKEmZ4x6RDsyAtxBJ` |
 
-If a live skill still shows a scaffold description, upload the matching `docs/the-artist/skills/<name>/SKILL.md` via Gumloop Skills → Upload Files.
+Official verbatim package: `docs/the-artist/skills/meeting-infographic/` (`SKILL.md` + `assets/template.html` + `meeting-infographic.skill`). To force a byte-identical live template, upload that `.skill` via Gumloop Skills → Upload Files.
 
 ## Agent configuration
 
