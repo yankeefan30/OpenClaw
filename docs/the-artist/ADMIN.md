@@ -28,6 +28,22 @@ Schemas live in `docs/the-artist/schemas/`. Primary system prompt: `SYSTEM_PROMP
 
 Live agent: [The Artist](https://www.gumloop.com/agents/CL4wbckwSbtrUJB6de42CY) (`CL4wbckwSbtrUJB6de42CY`)
 
+Canonical skill packages are in this repo. Live Gumloop skill IDs (attached):
+
+| Skill | ID |
+|---|---|
+| `artist-setup` | `55UFjp7UFuuVVDpwVWnFcG` |
+| `artist-intake` | `CfRxc3pKKbtPMYzJvUguDx` |
+| `artist-storyline` | `U7XeicgYMXU6nUm6vf4XHz` |
+| `artist-slide-blueprint` | `HaaSsEJ5omVAbSLSTYsmD4` |
+| `artist-visual-system` | `Cx34VPQ9brRi6uUekmmmZv` |
+| `artist-editor-in-chief` | `iJrz2VwmRrH9YhduYGd26Q` |
+| `artist-renderer` | `EEJTVe3Lz5gTySbwNsK8bi` |
+| `artist-output-package` | `JpV8DJvaHAEWjuK64jjBc4` |
+| `artist-templates` | `ZJhSh7asgq7GEJoUGQG9kG` |
+
+If a live skill still shows a scaffold description, upload the matching `docs/the-artist/skills/<name>/SKILL.md` via Gumloop Skills → Upload Files.
+
 ## Agent configuration
 
 | Field | Value |
