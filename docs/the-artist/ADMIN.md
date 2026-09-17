@@ -43,6 +43,8 @@ Canonical skill packages are in this repo. Live Gumloop skill IDs (attached):
 | `artist-renderer` | `EEJTVe3Lz5gTySbwNsK8bi` |
 | `artist-output-package` | `JpV8DJvaHAEWjuK64jjBc4` |
 | `artist-templates` | `ZJhSh7asgq7GEJoUGQG9kG` |
+| `meeting-infographic` | `TjTzPcNfzS6WLuNE3qvDMW` |
+| `artist-lifelog-infographic` | `FQkBCiKEmZ4x6RDsyAtxBJ` |
 
 If a live skill still shows a scaffold description, upload the matching `docs/the-artist/skills/<name>/SKILL.md` via Gumloop Skills → Upload Files.
 
