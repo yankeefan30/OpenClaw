@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<!--
+  MEETING INFOGRAPHIC — reference template.
+
+  This file is the working example, not sample copy. Copy it whole, then:
+    1. Replace every piece of text inside a [[double-bracket]] comment or marked
+       "PLACEHOLDER" below with real content extracted per the SKILL.md schema.
+    2. Delete the <section class="decisions"> or <section class="open-questions">
+       blocks entirely if the source has nothing real for them — do not leave
+       an empty box.
+    3. If content volume is high, add class="compact" to the outer <div class="page">
+       — the compact rules are already defined below, they just aren't active
+       on this default-density example.
+    4. Everything else — the CSS variables, the icon sprite, the component
+       structure — stays as-is. That consistency is the point.
+
+  The content on this page is a fictional worked example (Northbridge Health,
+  a placeholder company; Alex Rivera and the rest are placeholder names) built
+  to show every component filled in at once. Nothing on it is real.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Meeting infographic — template</title>
+<style>
+  :root {
+    /* Paper and panels */
+    --paper: #FFFFFF;
+    --panel: #F4F6F9;
+    --panel-line: #E2E6ED;
+    /* Text */
+    --ink: #10172A;
+    --ink-soft: #5B6478;
+    --ink-faint: #8A93A6;
+    --on-accent: #FFFFFF;
+    --on-accent-soft: #C7D4F5;
+    /* Accent */
+    --accent: #1D4ED8;
+    --accent-deep: #0B1E42;
+    --accent-soft: #E8EEFC;
+    /* Status — functional color, not decorative. One meaning per color, used nowhere else. */
+    --status-open: #64748B;      --status-open-bg: #EEF1F5;
+    --status-progress: #B45309;  --status-progress-bg: #FBEEDC;
+    --status-done: #15803D;      --status-done-bg: #E7F3EA;
+    --status-blocked: #B91C1C;   --status-blocked-bg: #FBEAEA;
+    /* Geometry */
+    --radius: 10px;
+    --radius-sm: 6px;
+    /* Type — two families (serif title, sans everything else) plus a functional
+       monospace reserved for literal data values (times, dates, IDs). */
+    --font-display: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #E7E9EE; }
+  body { font-family: var(--font-body); color: var(--ink); }
+
+  /* ---- page canvas: fixed US Letter portrait, one page ---- */
+  .page {
+    width: 8.5in;
+    min-height: 11in;
+    margin: 24px auto;
+    background: var(--paper);
+    box-shadow: 0 1px 3px rgba(16, 23, 42, 0.12), 0 0 0 1px var(--panel-line);
+    display: flex;
+    flex-direction: column;
+  }
+  @page { size: letter portrait; margin: 0; }
+  @media print {
+    html, body { background: var(--paper); }
+    .page { margin: 0; box-shadow: none; min-height: 11in; }
+  }
+
+  /* ---- 1. header band ---- */
+  .header {
+    background: var(--accent-deep);
+    color: var(--on-accent);
+    padding: 16px 44px 12px;
+  }
+  .header .eyebrow-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11.5px; color: var(--on-accent-soft); margin-bottom: 6px;
+  }
+  .header .eyebrow-row svg { width: 13px; height: 13px; }
+  .header h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 23px;
+    line-height: 1.2;
+    margin: 0 0 8px;
+    letter-spacing: 0.1px;
+  }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+  .meta-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--on-accent-soft);
+  }
+  .meta-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .meta-item .mono { font-family: var(--font-mono); color: var(--on-accent); }
+  .attendees { display: flex; align-items: center; margin-left: auto; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px; font-weight: 600; color: #fff;
+    border: 1.5px solid var(--accent-deep);
+    margin-left: -8px;
+  }
+  .avatar:first-child { margin-left: 0; }
+  .avatar.more { background: rgba(255,255,255,0.18); color: var(--on-accent); }
+
+  /* ---- 2. summary strip ---- */
+  .summary { padding: 14px 44px 12px; border-bottom: 1px solid var(--panel-line); }
+  .block-label {
+    font-size: 13px; font-weight: 600; color: var(--ink);
+    display: flex; align-items: center; gap: 7px; margin: 0 0 8px;
+  }
+  .block-label svg { width: 15px; height: 15px; color: var(--accent); }
+  .summary .headline { font-size: 13.5px; line-height: 1.4; margin: 0 0 8px; color: var(--ink); }
+  .takeaways { list-style: none; margin: 0 0 11px; padding: 0; }
+  .takeaways li {
+    position: relative; padding-left: 16px; margin-bottom: 4px;
+    font-size: 12.5px; line-height: 1.4; color: var(--ink-soft);
+  }
+  .takeaways li::before {
+    content: ""; position: absolute; left: 0; top: 6px;
+    width: 6px; height: 2px; background: var(--accent);
+  }
+  .stat-row { display: flex; gap: 10px; }
+  .stat-chip {
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: var(--radius-sm);
+    padding: 6px 14px; text-align: left; flex: 1;
+  }
+  .stat-chip .num { font-family: var(--font-mono); font-size: 19px; font-weight: 600; color: var(--accent-deep); }
+  .stat-chip .lbl { font-size: 10.5px; color: var(--ink-faint); margin-top: 1px; }
+
+  /* ---- shared section wrapper ---- */
+  .section { padding: 9px 44px; border-bottom: 1px solid var(--panel-line); }
+  .section:last-of-type { border-bottom: none; }
+
+  /* ---- 3. timeline ---- */
+  .timeline { position: relative; padding-left: 4px; }
+  .timeline-rail {
+    position: absolute; left: 62px; top: 6px; bottom: 6px; width: 2px; background: var(--panel-line);
+  }
+  .tl-item { display: flex; align-items: flex-start; position: relative; margin-bottom: 7px; }
+  .tl-item:last-child { margin-bottom: 0; }
+  .tl-time {
+    width: 52px; flex-shrink: 0; text-align: right; padding-right: 12px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); padding-top: 2px;
+  }
+  .tl-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--paper); box-shadow: 0 0 0 1px var(--accent);
+    margin-top: 3px; flex-shrink: 0; position: relative; z-index: 1;
+  }
+  .tl-content { padding-left: 14px; padding-top: 0; flex: 1; }
+  .tl-label-row { display: flex; align-items: center; gap: 6px; }
+  .tl-label-row svg { width: 14px; height: 14px; color: var(--accent); flex-shrink: 0; }
+  .tl-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .tl-detail { font-size: 12px; color: var(--ink-soft); margin-top: 2px; line-height: 1.4; }
+
+  /* ---- decisions ---- */
+  .decision-item {
+    display: flex; gap: 8px; align-items: flex-start; margin-bottom: 5px; font-size: 12.5px;
+  }
+  .decision-item:last-child { margin-bottom: 0; }
+  .decision-item svg { width: 14px; height: 14px; color: var(--status-done); margin-top: 2px; flex-shrink: 0; }
+  .decision-item .made-by { color: var(--ink-faint); font-size: 11.5px; }
+
+  /* ---- 5. action items ---- */
+  .status-bar-wrap { margin-bottom: 9px; }
+  .status-bar {
+    display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: var(--panel-line);
+  }
+  .status-bar span { height: 100%; }
+  .status-legend { display: flex; gap: 14px; margin-top: 7px; flex-wrap: wrap; }
+  .status-legend .leg { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-soft); }
+  .status-legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .action-card {
+    background: var(--panel); border-radius: var(--radius-sm);
+    padding: 8px 10px 8px 11px; position: relative; border: 1px solid var(--panel-line);
+    border-left: 4px solid var(--status-open);
+  }
+  .action-card.status-in_progress { border-left-color: var(--status-progress); }
+  .action-card.status-done { border-left-color: var(--status-done); }
+  .action-card.status-blocked { border-left-color: var(--status-blocked); }
+  .task-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+  .action-card .task { font-size: 12.5px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .status-chip {
+    flex-shrink: 0; white-space: nowrap;
+    font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
+    background: var(--status-open-bg); color: var(--status-open);
+  }
+  .action-card.status-in_progress .status-chip { background: var(--status-progress-bg); color: var(--status-progress); }
+  .action-card.status-done .status-chip { background: var(--status-done-bg); color: var(--status-done); }
+  .action-card.status-blocked .status-chip { background: var(--status-blocked-bg); color: var(--status-blocked); }
+  .action-meta { display: flex; align-items: center; justify-content: space-between; }
+  .owner { display: flex; align-items: center; gap: 6px; }
+  .owner .avatar { width: 19px; height: 19px; font-size: 8.5px; border: none; margin-left: 0; }
+  .owner .name { font-size: 11px; color: var(--ink-soft); }
+  .due { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); }
+  .due svg { width: 12px; height: 12px; }
+
+  /* ---- open questions ---- */
+  .oq-item { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 7px; font-size: 12.5px; color: var(--ink); }
+  .oq-item:last-child { margin-bottom: 0; }
+  .oq-item svg { width: 14px; height: 14px; color: var(--status-progress); margin-top: 2px; flex-shrink: 0; }
+
+  /* ---- footer ---- */
+  .footer {
+    margin-top: auto; padding: 6px 44px 10px; display: flex; justify-content: space-between;
+    font-size: 10.5px; color: var(--ink-faint);
+  }
+
+  /* ---- compact density variant (toggle by adding class="compact" to .page) ----
+     Use once a render check shows the page running past ~1056 CSS px (11in) at
+     default density — roughly past 5-6 timeline events or 6 action items with
+     decisions/open-questions present. Compact buys real room by tightening
+     every block at once; it is not just a smaller action-item grid. */
+  .page.compact .header { padding: 12px 44px 9px; }
+  .page.compact .header h1 { font-size: 19px; margin-bottom: 5px; }
+  .page.compact .summary { padding: 8px 44px 7px; }
+  .page.compact .summary .headline { font-size: 12.5px; margin-bottom: 6px; }
+  .page.compact .takeaways { margin-bottom: 8px; }
+  .page.compact .takeaways li { font-size: 11.5px; margin-bottom: 3px; }
+  .page.compact .stat-chip { padding: 5px 12px; }
+  .page.compact .stat-chip .num { font-size: 16px; }
+  .page.compact .section { padding: 6px 44px; }
+  .page.compact .block-label { margin-bottom: 5px; }
+  .page.compact .tl-item { margin-bottom: 4px; }
+  .page.compact .tl-label { font-size: 11.5px; }
+  .page.compact .tl-detail { font-size: 10.5px; line-height: 1.3; }
+  .page.compact .decision-item { margin-bottom: 3px; font-size: 11.5px; }
+  .page.compact .oq-item { margin-bottom: 4px; font-size: 11.5px; }
+  .page.compact .status-bar-wrap { margin-bottom: 6px; }
+  .page.compact .action-grid { grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+  .page.compact .action-card { padding: 6px 8px 6px 9px; }
+  .page.compact .action-card .task { font-size: 11px; line-height: 1.25; }
+  .page.compact .task-row { flex-direction: column; gap: 3px; margin-bottom: 4px; }
+  .page.compact .status-chip { font-size: 9px; padding: 1px 6px; }
+  .page.compact .owner .name { font-size: 10px; }
+  .page.compact .due { font-size: 9.5px; }
+  .page.compact .footer { padding: 5px 44px 7px; }
+</style>
+</head>
+<body>
+
+<!-- Icon sprite: hand-built line icons, 24x24 grid, stroke = currentColor. No external font, no CDN. -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5" width="18" height="16" rx="2"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="3" y1="10" x2="21" y2="10"/>
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 16,14"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/><polyline points="8,12.5 10.8,15.5 16,9.2"/>
+    </symbol>
+    <symbol id="icon-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="5" y1="3" x2="5" y2="21"/><path d="M5 4 L17 4 L13.5 8 L17 12 L5 12 Z"/>
+    </symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="3.5"/><polyline points="5,20 8,15 12,14 16,15 19,20"/>
+    </symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="9" cy="9" r="3"/><polyline points="4,20 6.3,15.8 9,15 11.7,15.8 14,20"/>
+      <circle cx="17.5" cy="9.5" r="2.3"/><polyline points="14.5,19.3 16.1,16.2 17.5,15.7 18.9,16.2 20.5,19.3"/>
+    </symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12,3 22,20 2,20"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.1" r="0.15" stroke-width="2.4"/>
+    </symbol>
+    <symbol id="icon-document" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="6,3 14,3 18,7 18,21 6,21"/><polyline points="14,3 14,7 18,7"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>
+    </symbol>
+    <symbol id="icon-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="0.4" stroke-width="3"/>
+    </symbol>
+    <symbol id="icon-message" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="3,4 21,4 21,16 9,16 4,21 4,16 3,16"/>
+    </symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
+    </symbol>
+    <symbol id="icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/><path d="M9.2 9.5c.3-1.7 1.7-2.7 3.1-2.6 1.5.1 2.7 1.1 2.7 2.5 0 1.6-1.9 2-2.6 3.1-.2.3-.3.7-.3 1.2"/><circle cx="12" cy="17" r="0.15" stroke-width="2.4"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="page">
+
+  <!-- ============ 1. HEADER ============ -->
+  <header class="header">
+    <div class="eyebrow-row">
+      <svg><use href="#icon-message"/></svg>
+      <span>Meeting notes — Wispr Flow</span>
+    </div>
+    <h1>Weekly security operations sync</h1>
+    <div class="meta-row">
+      <span class="meta-item"><svg><use href="#icon-calendar"/></svg><span class="mono">Sept 9, 2026</span></span>
+      <span class="meta-item"><svg><use href="#icon-clock"/></svg><span class="mono">9:00&ndash;9:45 AM ET</span></span>
+      <span class="meta-item"><svg><use href="#icon-users"/></svg>5 attendees</span>
+      <div class="attendees">
+        <span class="avatar" style="background:#1D4ED8">AR</span>
+        <span class="avatar" style="background:#B45309">PN</span>
+        <span class="avatar" style="background:#15803D">MW</span>
+        <span class="avatar" style="background:#7C3AED">DO</span>
+        <span class="avatar more">+1</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ 2. SUMMARY ============ -->
+  <section class="summary">
+    <p class="block-label"><svg><use href="#icon-document"/></svg>Summary</p>
+    <p class="headline">Weekly review of the firewall migration cutover, the Meridian Cloud support escalation, and this week&rsquo;s patch rollout. No new incidents since last sync.</p>
+    <ul class="takeaways">
+      <li>Firewall migration cutover confirmed for Sept 14, pending final change approval.</li>
+      <li>Meridian Cloud has not responded to the Sev-2 escalation opened Sept 5 &mdash; going to their account team directly.</li>
+      <li>Patch rollout for the edge fleet is complete; two hosts still pending reboot.</li>
+    </ul>
+    <div class="stat-row">
+      <div class="stat-chip"><div class="num">45</div><div class="lbl">minutes</div></div>
+      <div class="stat-chip"><div class="num">2</div><div class="lbl">decisions</div></div>
+      <div class="stat-chip"><div class="num">6</div><div class="lbl">action items</div></div>
+    </div>
+  </section>
+
+  <!-- ============ 3. TIMELINE ============ -->
+  <section class="section">
+    <p class="block-label"><svg><use href="#icon-clock"/></svg>Timeline</p>
+    <div class="timeline">
+      <div class="timeline-rail"></div>
+      <div class="tl-item">
+        <div class="tl-time">9:00</div>
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-label-row"><svg><use href="#icon-document"/></svg><span class="tl-label">Firewall migration status</span></div>
+          <div class="tl-detail">Cutover plan reviewed; rollback window confirmed at 90 minutes.</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">9:12</div>
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-label-row"><svg><use href="#icon-check"/></svg><span class="tl-label">Cutover date decided</span></div>
+          <div class="tl-detail">Group agreed to Sept 14, 10:00 PM &ndash; 12:00 AM, pending change approval.</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">9:20</div>
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-label-row"><svg><use href="#icon-alert"/></svg><span class="tl-label">Meridian Cloud escalation</span></div>
+          <div class="tl-detail">No response since the Sept 5 Sev-2 ticket; four days outside their stated SLA.</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">9:31</div>
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-label-row"><svg><use href="#icon-target"/></svg><span class="tl-label">Patch rollout review</span></div>
+          <div class="tl-detail">Edge fleet patched; two hosts flagged as pending reboot.</div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time">9:40</div>
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-label-row"><svg><use href="#icon-message"/></svg><span class="tl-label">Closing round</span></div>
+          <div class="tl-detail">Owners confirmed for open items; next sync set for Sept 16.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. DECISIONS (omit this whole section if none) ============ -->
+  <section class="section">
+    <p class="block-label"><svg><use href="#icon-check"/></svg>Decisions</p>
+    <div class="decision-item"><svg><use href="#icon-check"/></svg><span>Firewall cutover set for Sept 14, 10:00 PM&ndash;12:00 AM ET. <span class="made-by">&mdash; agreed by the group</span></span></div>
+    <div class="decision-item"><svg><use href="#icon-check"/></svg><span>Meridian escalation goes to the account team directly rather than waiting on the support queue. <span class="made-by">&mdash; Alex Rivera</span></span></div>
+  </section>
+
+  <!-- ============ 5. ACTION ITEMS ============ -->
+  <section class="section">
+    <p class="block-label"><svg><use href="#icon-target"/></svg>Action items</p>
+    <div class="status-bar-wrap">
+      <div class="status-bar">
+        <span style="width:33%; background:var(--status-open)"></span>
+        <span style="width:34%; background:var(--status-progress)"></span>
+        <span style="width:16.5%; background:var(--status-done)"></span>
+        <span style="width:16.5%; background:var(--status-blocked)"></span>
+      </div>
+      <div class="status-legend">
+        <span class="leg"><span class="dot" style="background:var(--status-open)"></span>Open &middot; 2</span>
+        <span class="leg"><span class="dot" style="background:var(--status-progress)"></span>In progress &middot; 2</span>
+        <span class="leg"><span class="dot" style="background:var(--status-done)"></span>Done &middot; 1</span>
+        <span class="leg"><span class="dot" style="background:var(--status-blocked)"></span>Blocked &middot; 1</span>
+      </div>
+    </div>
+    <div class="action-grid">
+      <div class="action-card status-in_progress">
+        <div class="task-row"><div class="task">Submit change record for the firewall cutover</div><span class="status-chip">In progress</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#1D4ED8">AR</span><span class="name">Alex Rivera</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>Sept 11</span>
+        </div>
+      </div>
+      <div class="action-card status-blocked">
+        <div class="task-row"><div class="task">Escalate Meridian Cloud ticket to account team</div><span class="status-chip">Blocked</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#B45309">PN</span><span class="name">Priya Nandan</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>No date set</span>
+        </div>
+      </div>
+      <div class="action-card status-done">
+        <div class="task-row"><div class="task">Confirm rollback window with the network team</div><span class="status-chip">Done</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#15803D">MW</span><span class="name">Marcus Webb</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>Sept 8</span>
+        </div>
+      </div>
+      <div class="action-card status-open">
+        <div class="task-row"><div class="task">Reboot the two pending edge hosts</div><span class="status-chip">Open</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#7C3AED">DO</span><span class="name">Dana Okafor</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>Sept 12</span>
+        </div>
+      </div>
+      <div class="action-card status-in_progress">
+        <div class="task-row"><div class="task">Draft the board note on the Meridian SLA miss</div><span class="status-chip">In progress</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#1D4ED8">AR</span><span class="name">Alex Rivera</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>Sept 13</span>
+        </div>
+      </div>
+      <div class="action-card status-open">
+        <div class="task-row"><div class="task">Confirm attendee list for the Sept 14 cutover bridge</div><span class="status-chip">Open</span></div>
+        <div class="action-meta">
+          <span class="owner"><span class="avatar" style="background:#64748B">?</span><span class="name">Unassigned</span></span>
+          <span class="due"><svg><use href="#icon-calendar"/></svg>No date set</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 6. OPEN QUESTIONS (omit this whole section if none) ============ -->
+  <section class="section">
+    <p class="block-label"><svg><use href="#icon-help"/></svg>Open questions</p>
+    <div class="oq-item"><svg><use href="#icon-help"/></svg><span>Does the Sept 14 cutover window need a separate customer notice, or does it fall under standing maintenance windows?</span></div>
+  </section>
+
+  <!-- ============ 7. FOOTER ============ -->
+  <footer class="footer">
+    <span>Source: Wispr Flow meeting notes &middot; Generated Sept 9, 2026</span>
+    <span>Internal &mdash; not for external distribution</span>
+  </footer>
+
+</div>
+</body>
+</html>

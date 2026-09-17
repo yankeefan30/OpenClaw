@@ -32,6 +32,8 @@ Every deck uses the **CVS Health 2025 Enterprise Template**. The Artist copies i
 
 To revise an existing deck from a conversation, attach the deck and say **Apply Lifelog Feedback** with the Limitless meeting, date, or topic. The Artist searches that lifelog and updates a new version of the file. It does not overwrite the original.
 
+To turn a Limitless meeting into one-page notes, say **Produce Meeting Infographic** and name the lifelog. The Artist follows the `meeting-infographic` skill and saves a portrait HTML file you can print to PDF.
+
 If you dump an unstructured brief, The Artist will infer fields and tell you what it inferred.
 
 ## First-run activation

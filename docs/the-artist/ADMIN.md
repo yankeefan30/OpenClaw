@@ -24,6 +24,7 @@ Gumloop cannot author a visual node graph over MCP. Production The Artist is an 
 | Prompt templates | `artist-templates` | Board / strategy / cyber / redesign narrative packs + CVS template lock |
 | Mandatory PPTX | `templates/CVS-Health-2025-Enterprise-Template.pptx` | CVS Health 2025 Enterprise Template — always copy, never edit |
 | Lifelog deck update | `artist-lifelog-deck-update` | Search Limitless, apply spoken feedback to a versioned copy of an attached deck |
+| Meeting infographic | `meeting-infographic` + `artist-lifelog-infographic` | One-page HTML recap from Limitless minutes; uses the attached meeting-infographic.skill template |
 
 Schemas live in `docs/the-artist/schemas/`. Primary system prompt: `SYSTEM_PROMPT.md` and `prompts/primary-system-prompt.md`.
 
